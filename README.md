@@ -28,13 +28,6 @@
 
 ---
 
-## 📺 Video Hướng Dẫn Cài Đặt & Sử Dụng
-
-> 🎬 **Xem video hướng dẫn chi tiết trên YouTube:**  
-> 👉 [**Hướng dẫn cài đặt & sử dụng DeviceLauncher trên macOS (YouTube)**](https://www.youtube.com) *(Cập nhật link video của bạn tại đây)*
-
----
-
 ## 🛠️ Hướng dẫn cài đặt chi tiết từng bước (A - Z)
 
 ### 📥 Bước 1: Tải ứng dụng
