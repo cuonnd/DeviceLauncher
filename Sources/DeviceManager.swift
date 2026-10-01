@@ -14,6 +14,12 @@ public class DeviceManager: ObservableObject {
     @Published public var busyMessage: String = ""
     @Published public var latestLogMessage: String = ""
 
+    // Available metadata for creation
+    @Published public var availableIOSDeviceTypes: [IOSDeviceType] = []
+    @Published public var availableIOSRuntimes: [IOSRuntime] = []
+    @Published public var availableAndroidSystemImages: [AndroidSystemImage] = []
+    @Published public var availableAndroidDeviceProfiles: [AndroidDeviceProfile] = []
+
     // Discovered paths
     @Published public var javaHome: String = ""
     @Published public var androidHome: String = ""
@@ -253,6 +259,8 @@ public class DeviceManager: ObservableObject {
         detectEnvironment()
         await fetchIOSDevices()
         await fetchAndroidAVDs()
+        await fetchAvailableIOSMetadata()
+        await fetchAvailableAndroidMetadata()
         await runDoctorCheck()
         isBusy = false
         busyMessage = ""
@@ -361,6 +369,80 @@ public class DeviceManager: ObservableObject {
         }
         let deviceType = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
         _ = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "create", name, deviceType, targetRuntime])
+        await fetchIOSDevices()
+        isBusy = false
+        busyMessage = ""
+    }
+
+    public func deleteIOSDevice(_ device: IOSDevice) async {
+        isBusy = true
+        busyMessage = "Đang xoá thiết bị \(device.name)..."
+        if device.isBooted {
+            _ = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "shutdown", device.udid])
+        }
+        _ = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "delete", device.udid])
+        await fetchIOSDevices()
+        isBusy = false
+        busyMessage = ""
+    }
+
+    public func createCustomIOSDevice(name: String, deviceType: String, runtime: String) async {
+        isBusy = true
+        busyMessage = "Đang tạo iOS Simulator: \(name)..."
+        _ = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "create", name, deviceType, runtime])
+        await fetchIOSDevices()
+        isBusy = false
+        busyMessage = ""
+    }
+
+    public func fetchAvailableIOSMetadata() async {
+        let runtimesResult = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "list", "-j", "runtimes"])
+        if runtimesResult.exitCode == 0, let data = runtimesResult.stdout.data(using: .utf8) {
+            struct RuntimeResponse: Codable {
+                let runtimes: [RuntimeItem]
+            }
+            struct RuntimeItem: Codable {
+                let name: String
+                let identifier: String
+                let version: String
+                let isAvailable: Bool?
+            }
+            if let decoded = try? JSONDecoder().decode(RuntimeResponse.self, from: data) {
+                self.availableIOSRuntimes = decoded.runtimes.compactMap {
+                    if $0.isAvailable ?? true {
+                        return IOSRuntime(name: $0.name, identifier: $0.identifier, version: $0.version)
+                    }
+                    return nil
+                }
+            }
+        }
+
+        let devTypesResult = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "list", "-j", "devicetypes"])
+        if devTypesResult.exitCode == 0, let data = devTypesResult.stdout.data(using: .utf8) {
+            struct DevTypeResponse: Codable {
+                let devicetypes: [DevTypeItem]
+            }
+            struct DevTypeItem: Codable {
+                let name: String
+                let identifier: String
+                let productFamily: String?
+            }
+            if let decoded = try? JSONDecoder().decode(DevTypeResponse.self, from: data) {
+                self.availableIOSDeviceTypes = decoded.devicetypes.filter {
+                    let fam = $0.productFamily ?? ""
+                    return fam == "iPhone" || fam == "iPad"
+                }.map {
+                    IOSDeviceType(name: $0.name, identifier: $0.identifier, productFamily: $0.productFamily ?? "iPhone")
+                }
+            }
+        }
+    }
+
+    public func downloadIOSPlatform() async {
+        isBusy = true
+        busyMessage = "Đang tải iOS Platform mới nhất qua xcodebuild..."
+        _ = await executeCommand("/usr/bin/xcodebuild", arguments: ["-downloadPlatform", "iOS"])
+        await fetchAvailableIOSMetadata()
         await fetchIOSDevices()
         isBusy = false
         busyMessage = ""
@@ -512,6 +594,81 @@ public class DeviceManager: ObservableObject {
 
         await fetchAndroidAVDs()
         await runDoctorCheck()
+        isBusy = false
+        busyMessage = ""
+    }
+
+    public func deleteAndroidAVD(_ avd: AndroidAVD) async {
+        isBusy = true
+        busyMessage = "Đang xoá máy ảo \(avd.displayName)..."
+        if avd.isRunning {
+            await stopAndroidAVD(avd)
+        }
+        _ = await executeCommand(avdmanagerPath, arguments: ["delete", "avd", "-n", avd.name])
+
+        let fm = FileManager.default
+        let homeDir = fm.homeDirectoryForCurrentUser.path
+        let avdIni = "\(homeDir)/.android/avd/\(avd.name).ini"
+        let avdDir = "\(homeDir)/.android/avd/\(avd.name).avd"
+        try? fm.removeItem(atPath: avdIni)
+        try? fm.removeItem(atPath: avdDir)
+
+        await fetchAndroidAVDs()
+        isBusy = false
+        busyMessage = ""
+    }
+
+    public func createCustomAndroidAVD(name: String, deviceId: String, systemImage: String) async {
+        isBusy = true
+        busyMessage = "Đang tạo máy ảo \(name)..."
+        _ = await executeCommand(
+            avdmanagerPath,
+            arguments: [
+                "create", "avd",
+                "-n", name,
+                "-k", systemImage,
+                "-d", deviceId,
+                "--force"
+            ]
+        )
+        await fetchAndroidAVDs()
+        isBusy = false
+        busyMessage = ""
+    }
+
+    public func fetchAvailableAndroidMetadata() async {
+        let standardImages: [(id: String, name: String, api: String)] = [
+            ("system-images;android-37.0;google_apis_playstore_ps16k;arm64-v8a", "Android 17 (API 37.0) Play Store", "37.0"),
+            ("system-images;android-36;google_apis_playstore;arm64-v8a", "Android 16 (API 36.0) Play Store", "36.0"),
+            ("system-images;android-35;google_apis_playstore;arm64-v8a", "Android 15 (API 35.0) Play Store", "35.0"),
+            ("system-images;android-34;google_apis_playstore;arm64-v8a", "Android 14 (API 34.0) Play Store", "34.0"),
+            ("system-images;android-33;google_apis_playstore;arm64-v8a", "Android 13 (API 33.0) Play Store", "33.0")
+        ]
+
+        let installedResult = await executeCommand(sdkmanagerPath, arguments: ["--list_installed"])
+        let installedText = installedResult.stdout
+
+        self.availableAndroidSystemImages = standardImages.map { item in
+            let installed = installedText.contains(item.id)
+            return AndroidSystemImage(packagePath: item.id, name: item.name, apiLevel: item.api, isInstalled: installed)
+        }
+
+        self.availableAndroidDeviceProfiles = [
+            AndroidDeviceProfile(deviceId: "pixel_9_pro", name: "Pixel 9 Pro"),
+            AndroidDeviceProfile(deviceId: "pixel_9", name: "Pixel 9"),
+            AndroidDeviceProfile(deviceId: "pixel_8_pro", name: "Pixel 8 Pro"),
+            AndroidDeviceProfile(deviceId: "pixel_8", name: "Pixel 8"),
+            AndroidDeviceProfile(deviceId: "pixel_7_pro", name: "Pixel 7 Pro"),
+            AndroidDeviceProfile(deviceId: "pixel_tablet", name: "Pixel Tablet"),
+            AndroidDeviceProfile(deviceId: "pixel_fold", name: "Pixel Fold")
+        ]
+    }
+
+    public func downloadAndroidSystemImage(_ packagePath: String) async {
+        isBusy = true
+        busyMessage = "Đang tải gói System Image (vui lòng chờ vài phút)..."
+        _ = await executeCommand(sdkmanagerPath, arguments: ["--install", packagePath])
+        await fetchAvailableAndroidMetadata()
         isBusy = false
         busyMessage = ""
     }

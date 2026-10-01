@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct IOSView: View {
     @ObservedObject var manager = DeviceManager.shared
+    @State private var showingCreateSheet = false
 
     public init() {}
 
@@ -28,9 +29,9 @@ public struct IOSView: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    Task { await manager.createLatestIOSSimulator() }
+                    showingCreateSheet = true
                 } label: {
-                    Label("Tạo iPhone 17 Pro", systemImage: "plus.circle.fill")
+                    Label("Tạo Thiết Bị Mới", systemImage: "plus.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
@@ -48,14 +49,22 @@ public struct IOSView: View {
                         .foregroundColor(.secondary)
                     Text("Chưa có thiết bị iOS Simulator nào")
                         .font(.headline)
-                    Text("Bấm nút bên dưới để tạo thiết bị iPhone 17 Pro với iOS runtime hiện có.")
+                    Text("Bấm nút bên dưới để tạo thiết bị iPhone mới hoặc tạo tuỳ chỉnh theo nhu cầu.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
-                    Button("Tạo iPhone 17 Pro Ngay") {
-                        Task { await manager.createLatestIOSSimulator() }
+
+                    HStack(spacing: 12) {
+                        Button("Tạo iPhone 17 Pro Nhanh") {
+                            Task { await manager.createLatestIOSSimulator() }
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Tạo Tuỳ Chỉnh...") {
+                            showingCreateSheet = true
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.borderedProminent)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
@@ -70,12 +79,16 @@ public struct IOSView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingCreateSheet) {
+            CreateIOSDeviceSheet(isPresented: $showingCreateSheet)
+        }
     }
 }
 
 struct IOSDeviceCard: View {
     let device: IOSDevice
     @ObservedObject var manager = DeviceManager.shared
+    @State private var showingDeleteAlert = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -149,6 +162,16 @@ struct IOSDeviceCard: View {
                     .tint(.blue)
                 }
 
+                // Delete Button
+                Button {
+                    showingDeleteAlert = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.bordered)
+                .help("Xoá thiết bị Simulator này")
+
                 Menu {
                     Button("Xoá dữ liệu (Erase All)") {
                         Task { await manager.eraseIOSDevice(device) }
@@ -174,5 +197,135 @@ struct IOSDeviceCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(device.isBooted ? Color.green.opacity(0.3) : Color.gray.opacity(0.15), lineWidth: 1)
         )
+        .alert("Xác nhận xoá Simulator?", isPresented: $showingDeleteAlert) {
+            Button("Xoá thiết bị", role: .destructive) {
+                Task { await manager.deleteIOSDevice(device) }
+            }
+            Button("Huỷ", role: .cancel) {}
+        } message: {
+            Text("Bạn có chắc chắn muốn xoá \(device.name)? Toàn bộ dữ liệu của simulator này sẽ bị xoá vĩnh viễn.")
+        }
+    }
+}
+
+// MARK: - Create iOS Sheet
+
+struct CreateIOSDeviceSheet: View {
+    @Binding var isPresented: Bool
+    @ObservedObject var manager = DeviceManager.shared
+
+    @State private var name: String = "iPhone 17 Pro"
+    @State private var selectedDeviceTypeId: String = ""
+    @State private var selectedRuntimeId: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("Tạo iOS Simulator Mới")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Spacer()
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tên thiết bị hiển thị:")
+                    .font(.headline)
+                TextField("Ví dụ: iPhone 17 Pro Max Test", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Dòng máy (Device Model):")
+                    .font(.headline)
+                if manager.availableIOSDeviceTypes.isEmpty {
+                    Text("Đang tải danh sách thiết bị...")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Picker("", selection: $selectedDeviceTypeId) {
+                        ForEach(manager.availableIOSDeviceTypes) { dt in
+                            Text(dt.name).tag(dt.identifier)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Phiên bản hệ điều hành (iOS Runtime):")
+                        .font(.headline)
+                    Spacer()
+                    Button("Tải thêm Runtime...") {
+                        Task { await manager.downloadIOSPlatform() }
+                    }
+                    .font(.caption)
+                    .buttonStyle(.link)
+                }
+
+                if manager.availableIOSRuntimes.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Chưa phát hiện iOS Runtime.")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                        Button("Tải iOS Platform (xcodebuild)") {
+                            Task { await manager.downloadIOSPlatform() }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                } else {
+                    Picker("", selection: $selectedRuntimeId) {
+                        ForEach(manager.availableIOSRuntimes) { rt in
+                            Text("\(rt.name) (v\(rt.version))").tag(rt.identifier)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
+
+            Spacer()
+
+            HStack {
+                Button("Huỷ") {
+                    isPresented = false
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Tạo Simulator") {
+                    Task {
+                        let devType = selectedDeviceTypeId.isEmpty ? (manager.availableIOSDeviceTypes.first?.identifier ?? "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro") : selectedDeviceTypeId
+                        let runtime = selectedRuntimeId.isEmpty ? (manager.availableIOSRuntimes.first?.identifier ?? "com.apple.CoreSimulator.SimRuntime.iOS-26-3") : selectedRuntimeId
+                        await manager.createCustomIOSDevice(name: name, deviceType: devType, runtime: runtime)
+                        isPresented = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || manager.isBusy)
+            }
+        }
+        .padding(24)
+        .frame(width: 480, height: 380)
+        .onAppear {
+            if let first = manager.availableIOSDeviceTypes.first {
+                selectedDeviceTypeId = first.identifier
+            }
+            if let firstRt = manager.availableIOSRuntimes.first {
+                selectedRuntimeId = firstRt.identifier
+            }
+        }
     }
 }

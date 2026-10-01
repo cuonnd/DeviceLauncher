@@ -43,6 +43,34 @@ public enum DoctorStatus: String, Codable {
     case loading = "LOADING"
 }
 
+public struct IOSDeviceType: Identifiable, Hashable {
+    public var id: String { identifier }
+    public let name: String
+    public let identifier: String
+    public let productFamily: String
+}
+
+public struct IOSRuntime: Identifiable, Hashable {
+    public var id: String { identifier }
+    public let name: String
+    public let identifier: String
+    public let version: String
+}
+
+public struct AndroidSystemImage: Identifiable, Hashable {
+    public var id: String { packagePath }
+    public let packagePath: String
+    public let name: String
+    public let apiLevel: String
+    public var isInstalled: Bool
+}
+
+public struct AndroidDeviceProfile: Identifiable, Hashable {
+    public var id: String { deviceId }
+    public let deviceId: String
+    public let name: String
+}
+
 public struct DoctorItem: Identifiable, Hashable {
     public let id: String
     public let category: String

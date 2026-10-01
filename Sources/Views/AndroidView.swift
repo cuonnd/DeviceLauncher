@@ -2,6 +2,8 @@ import SwiftUI
 
 public struct AndroidView: View {
     @ObservedObject var manager = DeviceManager.shared
+    @State private var showingCreateSheet = false
+    @State private var showingImagesSheet = false
 
     public init() {}
 
@@ -21,16 +23,24 @@ public struct AndroidView: View {
                 Spacer()
 
                 Button {
+                    showingImagesSheet = true
+                } label: {
+                    Label("Kho System Image", systemImage: "arrow.down.circle")
+                }
+                .buttonStyle(.bordered)
+                .help("Xem và tải thêm các bản Android System Image khác (Android 36, 35, 34...)")
+
+                Button {
                     Task { await manager.openAndroidStudio() }
                 } label: {
-                    Label("Mở Android Studio", systemImage: "arrow.up.forward.app")
+                    Label("Mở Studio", systemImage: "arrow.up.forward.app")
                 }
                 .buttonStyle(.bordered)
 
                 Button {
-                    Task { await manager.createLatestAndroidAVD() }
+                    showingCreateSheet = true
                 } label: {
-                    Label("Tạo Pixel 9 Pro (API 37)", systemImage: "plus.circle.fill")
+                    Label("Tạo AVD Mới", systemImage: "plus.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
@@ -48,16 +58,23 @@ public struct AndroidView: View {
                         .foregroundColor(.secondary)
                     Text("Chưa có máy ảo Android AVD nào")
                         .font(.headline)
-                    Text("Bấm nút bên dưới để tự động tạo máy ảo Pixel 9 Pro mới nhất chạy Android API 37.")
+                    Text("Bấm nút bên dưới để tạo nhanh máy ảo Pixel 9 Pro mới nhất chạy Android API 37 hoặc tạo tuỳ chỉnh theo ý muốn.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
 
-                    Button("Tạo Pixel 9 Pro (API 37) Ngay") {
-                        Task { await manager.createLatestAndroidAVD() }
+                    HStack(spacing: 12) {
+                        Button("Tạo Pixel 9 Pro Nhanh") {
+                            Task { await manager.createLatestAndroidAVD() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+
+                        Button("Tạo Tuỳ Chỉnh...") {
+                            showingCreateSheet = true
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding()
@@ -72,12 +89,19 @@ public struct AndroidView: View {
                 }
             }
         }
+        .sheet(isPresented: $showingCreateSheet) {
+            CreateAndroidAVDSheet(isPresented: $showingCreateSheet)
+        }
+        .sheet(isPresented: $showingImagesSheet) {
+            SystemImagesManagerSheet(isPresented: $showingImagesSheet)
+        }
     }
 }
 
 struct AndroidAVDCard: View {
     let avd: AndroidAVD
     @ObservedObject var manager = DeviceManager.shared
+    @State private var showingDeleteAlert = false
 
     var body: some View {
         HStack(spacing: 16) {
@@ -146,6 +170,16 @@ struct AndroidAVDCard: View {
                     .tint(.green)
                 }
 
+                // Delete Button
+                Button {
+                    showingDeleteAlert = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundColor(.red)
+                }
+                .buttonStyle(.bordered)
+                .help("Xoá máy ảo AVD này")
+
                 Menu {
                     Button("Khởi động nguội (Cold Boot)") {
                         Task { await manager.launchAndroidAVD(avd, coldBoot: true) }
@@ -175,5 +209,241 @@ struct AndroidAVDCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(avd.isRunning ? Color.green.opacity(0.3) : Color.gray.opacity(0.15), lineWidth: 1)
         )
+        .alert("Xác nhận xoá máy ảo Android?", isPresented: $showingDeleteAlert) {
+            Button("Xoá máy ảo", role: .destructive) {
+                Task { await manager.deleteAndroidAVD(avd) }
+            }
+            Button("Huỷ", role: .cancel) {}
+        } message: {
+            Text("Bạn có chắc chắn muốn xoá \(avd.displayName)? Toàn bộ dữ liệu của máy ảo này sẽ bị xoá vĩnh viễn.")
+        }
+    }
+}
+
+// MARK: - Create Android Sheet
+
+struct CreateAndroidAVDSheet: View {
+    @Binding var isPresented: Bool
+    @ObservedObject var manager = DeviceManager.shared
+
+    @State private var name: String = "Pixel_9_Custom"
+    @State private var selectedDeviceId: String = "pixel_9_pro"
+    @State private var selectedPackagePath: String = ""
+
+    var selectedImage: AndroidSystemImage? {
+        manager.availableAndroidSystemImages.first(where: { $0.packagePath == selectedPackagePath })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("Tạo Android AVD Mới")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                Spacer()
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Tên AVD (Không dấu, không khoảng trắng):")
+                    .font(.headline)
+                TextField("Ví dụ: Pixel_9_Pro_Test", text: $name)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Dòng máy phần cứng (Hardware Profile):")
+                    .font(.headline)
+                Picker("", selection: $selectedDeviceId) {
+                    ForEach(manager.availableAndroidDeviceProfiles) { profile in
+                        Text(profile.name).tag(profile.deviceId)
+                    }
+                }
+                .labelsHidden()
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Hệ điều hành Android (System Image):")
+                    .font(.headline)
+
+                Picker("", selection: $selectedPackagePath) {
+                    ForEach(manager.availableAndroidSystemImages) { img in
+                        Text("\(img.name) \(img.isInstalled ? "✓ [Đã có]" : "⬇ [Chưa tải]")").tag(img.packagePath)
+                    }
+                }
+                .labelsHidden()
+
+                if let img = selectedImage, !img.isInstalled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            Text("Gói này chưa được tải về máy của bạn.")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+
+                        Button {
+                            Task {
+                                await manager.downloadAndroidSystemImage(img.packagePath)
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.down.circle.fill")
+                                Text("Tải gói \(img.apiLevel) về ngay")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .disabled(manager.isBusy)
+                    }
+                    .padding(10)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+                }
+            }
+
+            Spacer()
+
+            HStack {
+                Button("Huỷ") {
+                    isPresented = false
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Tạo AVD") {
+                    Task {
+                        await manager.createCustomAndroidAVD(
+                            name: name.replacingOccurrences(of: " ", with: "_"),
+                            deviceId: selectedDeviceId,
+                            systemImage: selectedPackagePath
+                        )
+                        isPresented = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                .disabled(
+                    name.trimmingCharacters(in: .whitespaces).isEmpty ||
+                    selectedImage?.isInstalled != true ||
+                    manager.isBusy
+                )
+            }
+        }
+        .padding(24)
+        .frame(width: 500, height: 420)
+        .onAppear {
+            if let installedImg = manager.availableAndroidSystemImages.first(where: { $0.isInstalled }) {
+                selectedPackagePath = installedImg.packagePath
+            } else if let first = manager.availableAndroidSystemImages.first {
+                selectedPackagePath = first.packagePath
+            }
+        }
+    }
+}
+
+// MARK: - System Images Manager Sheet
+
+struct SystemImagesManagerSheet: View {
+    @Binding var isPresented: Bool
+    @ObservedObject var manager = DeviceManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Kho Android System Images")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    Text("Quản lý và tải thêm các phiên bản hệ điều hành Android (ARM64) về máy.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(manager.availableAndroidSystemImages) { img in
+                        HStack(spacing: 14) {
+                            ZStack {
+                                Circle()
+                                    .fill(img.isInstalled ? Color.green.opacity(0.15) : Color.gray.opacity(0.12))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: img.isInstalled ? "checkmark.circle.fill" : "arrow.down.circle")
+                                    .foregroundColor(img.isInstalled ? .green : .secondary)
+                            }
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(img.name)
+                                    .font(.headline)
+                                Text("Gói: \(img.packagePath.prefix(45))...")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            if img.isInstalled {
+                                Text("Đã cài đặt")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.green)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Color.green.opacity(0.1))
+                                    .cornerRadius(8)
+                            } else {
+                                Button {
+                                    Task { await manager.downloadAndroidSystemImage(img.packagePath) }
+                                } label: {
+                                    Label("Tải về", systemImage: "arrow.down")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.blue)
+                                .disabled(manager.isBusy)
+                            }
+                        }
+                        .padding(12)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(10)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Đóng") {
+                    isPresented = false
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(24)
+        .frame(width: 540, height: 420)
     }
 }
