@@ -30,13 +30,24 @@
 
 ## 🛠️ Hướng dẫn cài đặt & Chạy ứng dụng
 
-### Cách 1: Build & Chạy App macOS
-Chạy lệnh sau tại thư mục `/Users/macone/code/DeviceLauncher`:
+### Cách 1: Tải file nén phát hành (Release)
+1. Tải file **[DeviceLauncher-v1.0.0.zip](https://github.com/cuonnd/DeviceLauncher/releases/download/v1.0.0/DeviceLauncher-v1.0.0.zip)**.
+2. Giải nén và kéo `DeviceLauncher.app` vào thư mục `/Applications`.
+3. **Lưu ý khi mở lần đầu trên máy Mac khác (Lỗi "is damaged and can't be opened")**:
+   Do app chưa đăng ký chứng chỉ trả phí với Apple ($99/năm), cơ chế Gatekeeper của macOS sẽ gắn nhãn cách ly (quarantine). Bạn chỉ cần thực hiện **1 trong các cách sau** để mở:
+   - **Cách A (Nhanh nhất)**: Chạy file `Bypass_Gatekeeper.command` có sẵn trong file zip tải về.
+   - **Cách B (Qua Terminal)**: Mở Terminal và gõ:
+     ```bash
+     xattr -cr /Applications/DeviceLauncher.app
+     ```
+   - **Cách C**: Chuột phải vào `DeviceLauncher.app` -> Chọn **Open** -> Chọn **Open**.
+
+### Cách 2: Build từ mã nguồn (Source)
+Chạy lệnh sau tại thư mục clone dự án:
 ```bash
 chmod +x build.sh sim.sh
-./build.sh --run
+./build.sh --install --run
 ```
-*(Nếu muốn cài đặt thẳng vào `/Applications`, thêm cờ `--install`: `./build.sh --install --run`)*
 
 ### Cách 2: Sử dụng dòng lệnh `sim.sh`
 ```bash

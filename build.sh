@@ -46,7 +46,10 @@ fi
 # Make executable
 chmod +x "$APP_BUNDLE/Contents/MacOS/DeviceLauncher"
 
-echo "==> Successfully built $APP_BUNDLE!"
+echo "==> Signing app with ad-hoc signature..."
+codesign --force --deep --sign - "$APP_BUNDLE"
+
+echo "==> Successfully built and signed $APP_BUNDLE!"
 
 # Check arguments
 if [ "$1" == "--install" ] || [ "$2" == "--install" ]; then
