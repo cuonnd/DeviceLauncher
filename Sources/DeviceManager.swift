@@ -20,6 +20,12 @@ public class DeviceManager: ObservableObject {
     @Published public var availableAndroidSystemImages: [AndroidSystemImage] = []
     @Published public var availableAndroidDeviceProfiles: [AndroidDeviceProfile] = []
 
+    // Version & Updates
+    public let appVersion: String = "1.1.0"
+    @Published public var updateAvailable: String? = nil
+    @Published public var updateDownloadUrl: String? = nil
+    @Published public var updateReleaseNotes: String? = nil
+
     // Discovered paths
     @Published public var javaHome: String = ""
     @Published public var androidHome: String = ""
@@ -262,6 +268,68 @@ public class DeviceManager: ObservableObject {
         await fetchAvailableIOSMetadata()
         await fetchAvailableAndroidMetadata()
         await runDoctorCheck()
+        await checkForUpdates()
+        isBusy = false
+        busyMessage = ""
+    }
+
+    public func checkForUpdates() async {
+        guard let url = URL(string: "https://api.github.com/repos/cuonnd/DeviceLauncher/releases/latest") else { return }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        request.setValue("DeviceLauncher-App", forHTTPHeaderField: "User-Agent")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+
+            struct GitHubRelease: Codable {
+                let tag_name: String
+                let body: String?
+                let assets: [ReleaseAsset]
+            }
+            struct ReleaseAsset: Codable {
+                let name: String
+                let browser_download_url: String
+            }
+
+            let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
+            let latestTag = release.tag_name.replacingOccurrences(of: "v", with: "")
+
+            if latestTag.compare(self.appVersion, options: .numeric) == .orderedDescending {
+                self.updateAvailable = release.tag_name
+                self.updateReleaseNotes = release.body
+                if let zipAsset = release.assets.first(where: { $0.name.hasSuffix(".zip") }) {
+                    self.updateDownloadUrl = zipAsset.browser_download_url
+                }
+            } else {
+                self.updateAvailable = nil
+            }
+        } catch {
+            print("Check for updates failed: \(error)")
+        }
+    }
+
+    public func performAutoUpdate() async {
+        guard let downloadUrl = updateDownloadUrl else { return }
+        isBusy = true
+        busyMessage = "Đang tải bản cập nhật mới \(updateAvailable ?? "")..."
+
+        let script = """
+        TMP_ZIP="/tmp/DeviceLauncher_new.zip"
+        TMP_DIR="/tmp/DeviceLauncher_extracted"
+        rm -rf "$TMP_ZIP" "$TMP_DIR"
+        mkdir -p "$TMP_DIR"
+        curl -L -s "\(downloadUrl)" -o "$TMP_ZIP"
+        unzip -q -o "$TMP_ZIP" -d "$TMP_DIR"
+        if [ -d "$TMP_DIR/DeviceLauncher.app" ]; then
+            pkill -f DeviceLauncher || true
+            cp -R "$TMP_DIR/DeviceLauncher.app" /Applications/
+            xattr -cr /Applications/DeviceLauncher.app
+            open /Applications/DeviceLauncher.app
+        fi
+        """
+        _ = await executeCommand("/bin/bash", arguments: ["-c", script])
         isBusy = false
         busyMessage = ""
     }

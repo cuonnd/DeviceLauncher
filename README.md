@@ -32,13 +32,31 @@
 
 ### 📥 Bước 1: Tải ứng dụng
 Tải gói ứng dụng đã build sẵn từ mục Releases:
-- 🔗 **Link tải trực tiếp:** [**DeviceLauncher-v1.0.0.zip**](https://github.com/cuonnd/DeviceLauncher/releases/download/v1.0.0/DeviceLauncher-v1.0.0.zip)
+- 🔗 **Link tải trực tiếp:** [**DeviceLauncher-v1.1.0.zip**](https://github.com/cuonnd/DeviceLauncher/releases/download/v1.1.0/DeviceLauncher-v1.1.0.zip)
 
 ---
 
 ### 📂 Bước 2: Cài đặt vào máy Mac
-1. Mở file `DeviceLauncher-v1.0.0.zip` vừa tải về trong thư mục **Downloads**.
-2. Kéo icon **`DeviceLauncher.app`** vào thư mục **Applications** (Ứng dụng) của máy Mac.
+1. Mở file `DeviceLauncher-v1.1.0.zip` vừa tải về trong thư mục **Downloads**.
+2. Kéo icon **`DeviceLauncher.app`** vào thư mục **Applications** (Ứng dụng) của máy Mac. (Nếu máy đã có bản cũ, chọn **Replace / Thay thế**).
+
+---
+
+## 🔄 Dành cho người đã cài bản cũ (Cách cập nhật lên bản mới)
+
+Nếu bạn hoặc đồng nghiệp đã cài đặt phiên bản trước đó:
+- **Cách 1: Cập nhật tự động ngay trên App**:
+  - Khi mở bản mới hoặc bấm làm mới, app sẽ tự động hiện thông báo: *"Đã có phiên bản mới: v1.1.0!"*.
+  - Bấm nút **"Cập nhật ngay"** để app tự tải và nâng cấp trong vài giây.
+- **Cách 2: Tải đè file zip mới**:
+  - Tải [DeviceLauncher-v1.1.0.zip](https://github.com/cuonnd/DeviceLauncher/releases/download/v1.1.0/DeviceLauncher-v1.1.0.zip), giải nén và kéo vào thư mục `/Applications`, chọn **Replace (Thay thế)**.
+- **Cách 3: Cập nhật qua dòng lệnh**:
+  ```bash
+  ./sim.sh update
+  ```
+
+> [!NOTE]
+> **Toàn bộ máy ảo và dữ liệu cũ của bạn KHÔNG bị ảnh hưởng**: Tất cả máy ảo iOS Simulator và Android AVD được lưu trữ trong hệ thống macOS (`~/Library/...` và `~/.android/avd/`), hoàn toàn độc lập với file App. Do đó khi cập nhật, mọi máy ảo bạn đã tạo vẫn được giữ nguyên 100%!
 
 ---
 

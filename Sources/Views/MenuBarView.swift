@@ -34,6 +34,29 @@ public struct MenuBarView: View {
             .padding(.horizontal, 12)
             .padding(.top, 10)
 
+            // Update Notification Banner
+            if let newVersion = manager.updateAvailable {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkles")
+                        .foregroundColor(.orange)
+                    Text("Có bản mới \(newVersion)!")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                    Spacer()
+                    Button("Cập nhật") {
+                        Task { await manager.performAutoUpdate() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .controlSize(.mini)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(6)
+                .padding(.horizontal, 10)
+            }
+
             Divider()
 
             // iOS Section

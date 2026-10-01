@@ -117,6 +117,26 @@ case "$1" in
     echo "✅ Hoàn tất tải gói $IMG_TARGET!"
     ;;
 
+  update)
+    echo "🔄 Updating DeviceLauncher to latest version..."
+    if [ -d "$DIR/.git" ]; then
+      echo "==> Pulling latest source code from git..."
+      cd "$DIR" && git pull origin main
+      echo "==> Rebuilding and installing app..."
+      "$DIR/build.sh" --install
+    else
+      echo "==> Downloading latest release from GitHub..."
+      LATEST_ZIP=$(curl -s https://api.github.com/repos/cuonnd/DeviceLauncher/releases/latest | grep "browser_download_url.*zip" | cut -d '"' -f 4)
+      if [ -n "$LATEST_ZIP" ]; then
+        curl -L -s "$LATEST_ZIP" -o /tmp/DeviceLauncher_update.zip
+        unzip -q -o /tmp/DeviceLauncher_update.zip -d /tmp/DeviceLauncher_update
+        cp -R /tmp/DeviceLauncher_update/DeviceLauncher.app /Applications/
+        xattr -cr /Applications/DeviceLauncher.app
+      fi
+    fi
+    echo "✅ Cập nhật hoàn tất! Không làm mất bất kỳ thiết bị máy ảo hay dữ liệu cũ nào."
+    ;;
+
   app)
     echo "🖥️ Opening DeviceLauncher.app..."
     if [ ! -d "$DIR/build/DeviceLauncher.app" ]; then
@@ -136,6 +156,7 @@ case "$1" in
     echo "  delete-ios <UDID>           - Xoá thiết bị iOS Simulator không cần thiết"
     echo "  delete-android <AVD_NAME>   - Xoá máy ảo Android AVD không cần thiết"
     echo "  download-image [PACKAGE]    - Tải thêm System Image Android về máy"
+    echo "  update                      - Tự động cập nhật ứng dụng lên bản mới nhất"
     echo "  app                         - Mở ứng dụng GUI DeviceLauncher.app"
     ;;
 esac

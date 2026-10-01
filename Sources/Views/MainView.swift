@@ -71,19 +71,47 @@ public struct MainView: View {
                 }
             }
         } detail: {
-            Group {
-                switch selectedTab {
-                case .ios:
-                    IOSView()
-                case .android:
-                    AndroidView()
-                case .doctor:
-                    DoctorView()
-                case .logs:
-                    LogsView()
+            VStack(spacing: 0) {
+                if let newVersion = manager.updateAvailable {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .font(.headline)
+                            .foregroundColor(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Đã có phiên bản mới: \(newVersion)!")
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                            Text("Bấm cập nhật để nâng cấp tự động mà không làm mất dữ liệu hay máy ảo.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Button("Cập nhật ngay") {
+                            Task { await manager.performAutoUpdate() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .disabled(manager.isBusy)
+                    }
+                    .padding(12)
+                    .background(Color.orange.opacity(0.12))
+                    Divider()
                 }
+
+                Group {
+                    switch selectedTab {
+                    case .ios:
+                        IOSView()
+                    case .android:
+                        AndroidView()
+                    case .doctor:
+                        DoctorView()
+                    case .logs:
+                        LogsView()
+                    }
+                }
+                .frame(minWidth: 550, minHeight: 450)
             }
-            .frame(minWidth: 550, minHeight: 450)
         }
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
