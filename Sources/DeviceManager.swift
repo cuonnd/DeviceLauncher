@@ -21,7 +21,7 @@ public class DeviceManager: ObservableObject {
     @Published public var availableAndroidDeviceProfiles: [AndroidDeviceProfile] = []
 
     // Version & Updates
-    public let appVersion: String = "1.1.0"
+    public let appVersion: String = "1.2.0"
     @Published public var updateAvailable: String? = nil
     @Published public var updateDownloadUrl: String? = nil
     @Published public var updateReleaseNotes: String? = nil
@@ -156,6 +156,7 @@ public class DeviceManager: ObservableObject {
     public func executeCommand(
         _ executable: String,
         arguments: [String],
+        input: String? = nil,
         customEnv: [String: String] = [:],
         background: Bool = false
     ) async -> (exitCode: Int32, stdout: String, stderr: String) {
@@ -219,13 +220,19 @@ public class DeviceManager: ObservableObject {
                     return
                 }
 
+                let inPipe = Pipe()
                 let outPipe = Pipe()
                 let errPipe = Pipe()
+                process.standardInput = inPipe
                 process.standardOutput = outPipe
                 process.standardError = errPipe
 
                 do {
                     try process.run()
+                    if let input = input, let data = input.data(using: .utf8) {
+                        inPipe.fileHandleForWriting.write(data)
+                    }
+                    try? inPipe.fileHandleForWriting.close()
                     process.waitUntilExit()
                     let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
                     let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
@@ -454,6 +461,20 @@ public class DeviceManager: ObservableObject {
         busyMessage = ""
     }
 
+    public func deleteMultipleIOSDevices(udids: [String]) async {
+        isBusy = true
+        busyMessage = "Đang xoá \(udids.count) thiết bị iOS đã chọn..."
+        for udid in udids {
+            if let dev = iosDevices.first(where: { $0.udid == udid }), dev.isBooted {
+                _ = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "shutdown", udid])
+            }
+            _ = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "delete", udid])
+        }
+        await fetchIOSDevices()
+        isBusy = false
+        busyMessage = ""
+    }
+
     public func createCustomIOSDevice(name: String, deviceType: String, runtime: String) async {
         isBusy = true
         busyMessage = "Đang tạo iOS Simulator: \(name)..."
@@ -625,27 +646,46 @@ public class DeviceManager: ObservableObject {
         busyMessage = ""
     }
 
+    public static func sanitizeAvdName(_ input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "Pixel_Custom" }
+        let mutable = NSMutableString(string: trimmed) as CFMutableString
+        CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
+        var ascii = (mutable as String)
+            .replacingOccurrences(of: "đ", with: "d")
+            .replacingOccurrences(of: "Đ", with: "D")
+            .replacingOccurrences(of: " ", with: "_")
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        ascii = ascii.unicodeScalars.filter { allowed.contains($0) }.map { String($0) }.joined()
+        if ascii.isEmpty {
+            return "Pixel_Custom"
+        }
+        return ascii
+    }
+
     public func createLatestAndroidAVD(name: String = "Pixel_9_Pro_API_37") async {
         isBusy = true
-        busyMessage = "Đang kiểm tra & tạo AVD \(name)..."
+        let safeName = Self.sanitizeAvdName(name)
+        busyMessage = "Đang kiểm tra & tạo AVD \(safeName)..."
 
         let sysImg = "system-images;android-37.0;google_apis_playstore_ps16k;arm64-v8a"
         let listResult = await executeCommand(sdkmanagerPath, arguments: ["--list_installed"])
         if !listResult.stdout.contains("system-images;android-") {
             busyMessage = "Đang tải System Image Android API 37 (vui lòng chờ)..."
-            _ = await executeCommand(sdkmanagerPath, arguments: ["--install", sysImg])
+            _ = await executeCommand(sdkmanagerPath, arguments: ["--install", sysImg], input: "y\n")
         }
 
-        busyMessage = "Đang tạo AVD \(name)..."
+        busyMessage = "Đang tạo AVD \(safeName)..."
         let createResult = await executeCommand(
             avdmanagerPath,
             arguments: [
                 "create", "avd",
-                "-n", name,
+                "-n", safeName,
                 "-k", sysImg,
                 "-d", "pixel_9_pro",
                 "--force"
-            ]
+            ],
+            input: "no\n"
         )
 
         if createResult.exitCode != 0 {
@@ -653,10 +693,11 @@ public class DeviceManager: ObservableObject {
                 avdmanagerPath,
                 arguments: [
                     "create", "avd",
-                    "-n", name,
+                    "-n", safeName,
                     "-k", sysImg,
                     "--force"
-                ]
+                ],
+                input: "no\n"
             )
         }
 
@@ -686,22 +727,69 @@ public class DeviceManager: ObservableObject {
         busyMessage = ""
     }
 
-    public func createCustomAndroidAVD(name: String, deviceId: String, systemImage: String) async {
+    public func deleteMultipleAndroidAVDs(names: [String]) async {
         isBusy = true
-        busyMessage = "Đang tạo máy ảo \(name)..."
-        _ = await executeCommand(
-            avdmanagerPath,
-            arguments: [
-                "create", "avd",
-                "-n", name,
-                "-k", systemImage,
-                "-d", deviceId,
-                "--force"
-            ]
-        )
+        busyMessage = "Đang xoá \(names.count) máy ảo Android đã chọn..."
+        let fm = FileManager.default
+        let homeDir = fm.homeDirectoryForCurrentUser.path
+
+        for name in names {
+            if let avd = androidDevices.first(where: { $0.name == name }), avd.isRunning {
+                await stopAndroidAVD(avd)
+            }
+            _ = await executeCommand(avdmanagerPath, arguments: ["delete", "avd", "-n", name])
+            let avdIni = "\(homeDir)/.android/avd/\(name).ini"
+            let avdDir = "\(homeDir)/.android/avd/\(name).avd"
+            try? fm.removeItem(atPath: avdIni)
+            try? fm.removeItem(atPath: avdDir)
+        }
         await fetchAndroidAVDs()
         isBusy = false
         busyMessage = ""
+    }
+
+    @discardableResult
+    public func createCustomAndroidAVD(name: String, deviceId: String, systemImage: String) async -> (success: Bool, error: String?) {
+        isBusy = true
+        let safeName = Self.sanitizeAvdName(name)
+        busyMessage = "Đang tạo máy ảo \(safeName)..."
+
+        var result = await executeCommand(
+            avdmanagerPath,
+            arguments: [
+                "create", "avd",
+                "-n", safeName,
+                "-k", systemImage,
+                "-d", deviceId,
+                "--force"
+            ],
+            input: "no\n"
+        )
+
+        // Fallback without deviceId if device definition failed
+        if result.exitCode != 0 {
+            result = await executeCommand(
+                avdmanagerPath,
+                arguments: [
+                    "create", "avd",
+                    "-n", safeName,
+                    "-k", systemImage,
+                    "--force"
+                ],
+                input: "no\n"
+            )
+        }
+
+        await fetchAndroidAVDs()
+        isBusy = false
+        busyMessage = ""
+
+        if result.exitCode == 0 {
+            return (true, nil)
+        } else {
+            let errMsg = !result.stderr.isEmpty ? result.stderr : (!result.stdout.isEmpty ? result.stdout : "Lỗi khi tạo AVD (exit code \(result.exitCode))")
+            return (false, errMsg)
+        }
     }
 
     public func fetchAvailableAndroidMetadata() async {
@@ -735,7 +823,7 @@ public class DeviceManager: ObservableObject {
     public func downloadAndroidSystemImage(_ packagePath: String) async {
         isBusy = true
         busyMessage = "Đang tải gói System Image (vui lòng chờ vài phút)..."
-        _ = await executeCommand(sdkmanagerPath, arguments: ["--install", packagePath])
+        _ = await executeCommand(sdkmanagerPath, arguments: ["--install", packagePath], input: "y\n")
         await fetchAvailableAndroidMetadata()
         isBusy = false
         busyMessage = ""

@@ -3,6 +3,9 @@ import SwiftUI
 public struct IOSView: View {
     @ObservedObject var manager = DeviceManager.shared
     @State private var showingCreateSheet = false
+    @State private var isSelectionMode = false
+    @State private var selectedDeviceIds: Set<String> = []
+    @State private var showingBulkDeleteAlert = false
 
     public init() {}
 
@@ -14,27 +17,62 @@ public struct IOSView: View {
                     Text("iOS Simulators")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("\(manager.iosDevices.count) thiết bị • \(manager.iosDevices.filter { $0.isBooted }.count) đang chạy")
+                    Text(isSelectionMode ? "Đã chọn \(selectedDeviceIds.count) / \(manager.iosDevices.count) thiết bị" : "\(manager.iosDevices.count) thiết bị • \(manager.iosDevices.filter { $0.isBooted }.count) đang chạy")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(isSelectionMode ? .orange : .secondary)
                 }
 
                 Spacer()
 
-                Button {
-                    Task { await manager.openSimulatorApp() }
-                } label: {
-                    Label("Mở Simulator App", systemImage: "arrow.up.forward.app")
-                }
-                .buttonStyle(.bordered)
+                if isSelectionMode {
+                    Button(selectedDeviceIds.count == manager.iosDevices.count ? "Bỏ chọn tất cả" : "Chọn tất cả") {
+                        if selectedDeviceIds.count == manager.iosDevices.count {
+                            selectedDeviceIds.removeAll()
+                        } else {
+                            selectedDeviceIds = Set(manager.iosDevices.map { $0.udid })
+                        }
+                    }
+                    .buttonStyle(.bordered)
 
-                Button {
-                    showingCreateSheet = true
-                } label: {
-                    Label("Tạo Thiết Bị Mới", systemImage: "plus.circle.fill")
+                    Button {
+                        showingBulkDeleteAlert = true
+                    } label: {
+                        Label("Xoá (\(selectedDeviceIds.count))", systemImage: "trash.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(selectedDeviceIds.isEmpty || manager.isBusy)
+
+                    Button("Xong") {
+                        isSelectionMode = false
+                        selectedDeviceIds.removeAll()
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    if !manager.iosDevices.isEmpty {
+                        Button {
+                            isSelectionMode = true
+                        } label: {
+                            Label("Chọn nhiều", systemImage: "checklist")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Button {
+                        Task { await manager.openSimulatorApp() }
+                    } label: {
+                        Label("Mở App", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        showingCreateSheet = true
+                    } label: {
+                        Label("Tạo Mới", systemImage: "plus.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.blue)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.blue)
             }
             .padding()
             .background(Color(NSColor.windowBackgroundColor))
@@ -72,7 +110,18 @@ public struct IOSView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(manager.iosDevices) { dev in
-                            IOSDeviceCard(device: dev)
+                            IOSDeviceCard(
+                                device: dev,
+                                isSelectionMode: isSelectionMode,
+                                isSelected: selectedDeviceIds.contains(dev.udid),
+                                onToggleSelect: {
+                                    if selectedDeviceIds.contains(dev.udid) {
+                                        selectedDeviceIds.remove(dev.udid)
+                                    } else {
+                                        selectedDeviceIds.insert(dev.udid)
+                                    }
+                                }
+                            )
                         }
                     }
                     .padding()
@@ -82,16 +131,42 @@ public struct IOSView: View {
         .sheet(isPresented: $showingCreateSheet) {
             CreateIOSDeviceSheet(isPresented: $showingCreateSheet)
         }
+        .alert("Xác nhận xoá nhiều Simulator?", isPresented: $showingBulkDeleteAlert) {
+            Button("Xoá \(selectedDeviceIds.count) thiết bị", role: .destructive) {
+                let idsToDelete = Array(selectedDeviceIds)
+                Task {
+                    await manager.deleteMultipleIOSDevices(udids: idsToDelete)
+                    selectedDeviceIds.removeAll()
+                    isSelectionMode = false
+                }
+            }
+            Button("Huỷ", role: .cancel) {}
+        } message: {
+            Text("Bạn có chắc chắn muốn xoá \(selectedDeviceIds.count) thiết bị iOS đã chọn? Dữ liệu của các thiết bị này sẽ bị xoá vĩnh viễn.")
+        }
     }
 }
 
 struct IOSDeviceCard: View {
     let device: IOSDevice
+    var isSelectionMode: Bool = false
+    var isSelected: Bool = false
+    var onToggleSelect: () -> Void = {}
+
     @ObservedObject var manager = DeviceManager.shared
     @State private var showingDeleteAlert = false
 
     var body: some View {
         HStack(spacing: 16) {
+            if isSelectionMode {
+                Button(action: onToggleSelect) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundColor(isSelected ? .blue : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
             ZStack {
                 Circle()
                     .fill(device.isBooted ? Color.green.opacity(0.15) : Color.gray.opacity(0.12))

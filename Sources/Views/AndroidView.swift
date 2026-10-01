@@ -4,6 +4,9 @@ public struct AndroidView: View {
     @ObservedObject var manager = DeviceManager.shared
     @State private var showingCreateSheet = false
     @State private var showingImagesSheet = false
+    @State private var isSelectionMode = false
+    @State private var selectedAvdNames: Set<String> = []
+    @State private var showingBulkDeleteAlert = false
 
     public init() {}
 
@@ -15,35 +18,70 @@ public struct AndroidView: View {
                     Text("Android Emulators")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("\(manager.androidDevices.count) máy ảo AVD • \(manager.androidDevices.filter { $0.isRunning }.count) đang chạy")
+                    Text(isSelectionMode ? "Đã chọn \(selectedAvdNames.count) / \(manager.androidDevices.count) máy ảo" : "\(manager.androidDevices.count) máy ảo AVD • \(manager.androidDevices.filter { $0.isRunning }.count) đang chạy")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(isSelectionMode ? .orange : .secondary)
                 }
 
                 Spacer()
 
-                Button {
-                    showingImagesSheet = true
-                } label: {
-                    Label("Kho System Image", systemImage: "arrow.down.circle")
-                }
-                .buttonStyle(.bordered)
-                .help("Xem và tải thêm các bản Android System Image khác (Android 36, 35, 34...)")
+                if isSelectionMode {
+                    Button(selectedAvdNames.count == manager.androidDevices.count ? "Bỏ chọn tất cả" : "Chọn tất cả") {
+                        if selectedAvdNames.count == manager.androidDevices.count {
+                            selectedAvdNames.removeAll()
+                        } else {
+                            selectedAvdNames = Set(manager.androidDevices.map { $0.name })
+                        }
+                    }
+                    .buttonStyle(.bordered)
 
-                Button {
-                    Task { await manager.openAndroidStudio() }
-                } label: {
-                    Label("Mở Studio", systemImage: "arrow.up.forward.app")
-                }
-                .buttonStyle(.bordered)
+                    Button {
+                        showingBulkDeleteAlert = true
+                    } label: {
+                        Label("Xoá (\(selectedAvdNames.count))", systemImage: "trash.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(selectedAvdNames.isEmpty || manager.isBusy)
 
-                Button {
-                    showingCreateSheet = true
-                } label: {
-                    Label("Tạo AVD Mới", systemImage: "plus.circle.fill")
+                    Button("Xong") {
+                        isSelectionMode = false
+                        selectedAvdNames.removeAll()
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    if !manager.androidDevices.isEmpty {
+                        Button {
+                            isSelectionMode = true
+                        } label: {
+                            Label("Chọn nhiều", systemImage: "checklist")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Button {
+                        showingImagesSheet = true
+                    } label: {
+                        Label("Kho System Image", systemImage: "arrow.down.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Xem và tải thêm các bản Android System Image khác (Android 36, 35, 34...)")
+
+                    Button {
+                        Task { await manager.openAndroidStudio() }
+                    } label: {
+                        Label("Mở Studio", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        showingCreateSheet = true
+                    } label: {
+                        Label("Tạo AVD Mới", systemImage: "plus.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
             }
             .padding()
             .background(Color(NSColor.windowBackgroundColor))
@@ -82,7 +120,18 @@ public struct AndroidView: View {
                 ScrollView {
                     LazyVStack(spacing: 12) {
                         ForEach(manager.androidDevices) { avd in
-                            AndroidAVDCard(avd: avd)
+                            AndroidAVDCard(
+                                avd: avd,
+                                isSelectionMode: isSelectionMode,
+                                isSelected: selectedAvdNames.contains(avd.name),
+                                onToggleSelect: {
+                                    if selectedAvdNames.contains(avd.name) {
+                                        selectedAvdNames.remove(avd.name)
+                                    } else {
+                                        selectedAvdNames.insert(avd.name)
+                                    }
+                                }
+                            )
                         }
                     }
                     .padding()
@@ -95,16 +144,41 @@ public struct AndroidView: View {
         .sheet(isPresented: $showingImagesSheet) {
             SystemImagesManagerSheet(isPresented: $showingImagesSheet)
         }
+        .alert("Xác nhận xoá nhiều AVD?", isPresented: $showingBulkDeleteAlert) {
+            Button("Xoá \(selectedAvdNames.count) máy ảo", role: .destructive) {
+                let namesToDelete = Array(selectedAvdNames)
+                Task {
+                    await manager.deleteMultipleAndroidAVDs(names: namesToDelete)
+                    selectedAvdNames.removeAll()
+                    isSelectionMode = false
+                }
+            }
+            Button("Huỷ", role: .cancel) {}
+        } message: {
+            Text("Bạn có chắc chắn muốn xoá \(selectedAvdNames.count) máy ảo Android đã chọn? Dữ liệu của các máy ảo này sẽ bị xoá vĩnh viễn.")
+        }
     }
 }
 
 struct AndroidAVDCard: View {
     let avd: AndroidAVD
+    var isSelectionMode: Bool = false
+    var isSelected: Bool = false
+    var onToggleSelect: () -> Void = {}
+
     @ObservedObject var manager = DeviceManager.shared
     @State private var showingDeleteAlert = false
 
     var body: some View {
         HStack(spacing: 16) {
+            if isSelectionMode {
+                Button(action: onToggleSelect) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                        .foregroundColor(isSelected ? .green : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
             ZStack {
                 Circle()
                     .fill(avd.isRunning ? Color.green.opacity(0.15) : Color.gray.opacity(0.12))
@@ -229,6 +303,8 @@ struct CreateAndroidAVDSheet: View {
     @State private var name: String = "Pixel_9_Custom"
     @State private var selectedDeviceId: String = "pixel_9_pro"
     @State private var selectedPackagePath: String = ""
+    @State private var errorMessage: String? = nil
+    @State private var showingErrorAlert = false
 
     var selectedImage: AndroidSystemImage? {
         manager.availableAndroidSystemImages.first(where: { $0.packagePath == selectedPackagePath })
@@ -254,10 +330,17 @@ struct CreateAndroidAVDSheet: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Tên AVD (Không dấu, không khoảng trắng):")
+                Text("Tên máy ảo AVD:")
                     .font(.headline)
                 TextField("Ví dụ: Pixel_9_Pro_Test", text: $name)
                     .textFieldStyle(.roundedBorder)
+
+                let safe = DeviceManager.sanitizeAvdName(name)
+                if !name.isEmpty && safe != name {
+                    Text("Tên hệ thống chuẩn hoá: \(safe)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -324,12 +407,17 @@ struct CreateAndroidAVDSheet: View {
 
                 Button("Tạo AVD") {
                     Task {
-                        await manager.createCustomAndroidAVD(
-                            name: name.replacingOccurrences(of: " ", with: "_"),
+                        let res = await manager.createCustomAndroidAVD(
+                            name: name,
                             deviceId: selectedDeviceId,
                             systemImage: selectedPackagePath
                         )
-                        isPresented = false
+                        if res.success {
+                            isPresented = false
+                        } else {
+                            errorMessage = res.error
+                            showingErrorAlert = true
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -342,13 +430,18 @@ struct CreateAndroidAVDSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 500, height: 420)
+        .frame(width: 500, height: 440)
         .onAppear {
             if let installedImg = manager.availableAndroidSystemImages.first(where: { $0.isInstalled }) {
                 selectedPackagePath = installedImg.packagePath
             } else if let first = manager.availableAndroidSystemImages.first {
                 selectedPackagePath = first.packagePath
             }
+        }
+        .alert("Không thể tạo máy ảo Android", isPresented: $showingErrorAlert) {
+            Button("Đóng", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Đã xảy ra lỗi khi tạo AVD. Vui lòng kiểm tra lại cấu hình hoặc xem tab Terminal Logs.")
         }
     }
 }
