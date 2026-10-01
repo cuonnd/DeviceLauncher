@@ -1,8 +1,10 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct IOSView: View {
     @ObservedObject var manager = DeviceManager.shared
     @State private var showingCreateSheet = false
+    @State private var showingRuntimesSheet = false
     @State private var isSelectionMode = false
     @State private var selectedDeviceIds: Set<String> = []
     @State private var showingBulkDeleteAlert = false
@@ -57,6 +59,14 @@ public struct IOSView: View {
                         }
                         .buttonStyle(.bordered)
                     }
+
+                    Button {
+                        showingRuntimesSheet = true
+                    } label: {
+                        Label("Kho iOS Runtime", systemImage: "arrow.down.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Xem và tải thêm các bản iOS Runtime (iOS 18, 17, 16...) để chạy các dòng máy cũ")
 
                     Button {
                         Task { await manager.openSimulatorApp() }
@@ -130,6 +140,9 @@ public struct IOSView: View {
         }
         .sheet(isPresented: $showingCreateSheet) {
             CreateIOSDeviceSheet(isPresented: $showingCreateSheet)
+        }
+        .sheet(isPresented: $showingRuntimesSheet) {
+            IOSRuntimesManagerSheet(isPresented: $showingRuntimesSheet)
         }
         .alert("Xác nhận xoá nhiều Simulator?", isPresented: $showingBulkDeleteAlert) {
             Button("Xoá \(selectedDeviceIds.count) thiết bị", role: .destructive) {
@@ -292,6 +305,22 @@ struct CreateIOSDeviceSheet: View {
     @State private var name: String = "iPhone 17 Pro"
     @State private var selectedDeviceTypeId: String = ""
     @State private var selectedRuntimeId: String = ""
+    @State private var showingRuntimesSheet = false
+    @State private var errorMessage: String? = nil
+    @State private var showingErrorAlert = false
+
+    var selectedDeviceType: IOSDeviceType? {
+        manager.availableIOSDeviceTypes.first(where: { $0.identifier == selectedDeviceTypeId })
+    }
+
+    var selectedRuntime: IOSRuntime? {
+        manager.availableIOSRuntimes.first(where: { $0.identifier == selectedRuntimeId })
+    }
+
+    var isCompatible: Bool {
+        guard let dt = selectedDeviceType, let rt = selectedRuntime else { return true }
+        return dt.isCompatible(withRuntimeVersion: rt.version)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -329,7 +358,9 @@ struct CreateIOSDeviceSheet: View {
                 } else {
                     Picker("", selection: $selectedDeviceTypeId) {
                         ForEach(manager.availableIOSDeviceTypes) { dt in
-                            Text(dt.name).tag(dt.identifier)
+                            let compatible = dt.isCompatible(withRuntimeVersion: selectedRuntime?.version ?? "26")
+                            Text(compatible ? dt.name : "\(dt.name) ⚠️ (Yêu cầu iOS ≤ \(dt.maxMajorVersion ?? 16))")
+                                .tag(dt.identifier)
                         }
                     }
                     .labelsHidden()
@@ -341,8 +372,8 @@ struct CreateIOSDeviceSheet: View {
                     Text("Phiên bản hệ điều hành (iOS Runtime):")
                         .font(.headline)
                     Spacer()
-                    Button("Tải thêm Runtime...") {
-                        Task { await manager.downloadIOSPlatform() }
+                    Button("Kho iOS Runtime...") {
+                        showingRuntimesSheet = true
                     }
                     .font(.caption)
                     .buttonStyle(.link)
@@ -369,6 +400,35 @@ struct CreateIOSDeviceSheet: View {
                 }
             }
 
+            if !isCompatible, let dt = selectedDeviceType, let maxMajor = dt.maxMajorVersion {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(dt.name) không tương thích với \(selectedRuntime?.name ?? "bản iOS này")")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.orange)
+                            Text("\(dt.name) là dòng máy đời cũ, chỉ hỗ trợ tối đa iOS \(maxMajor). Để tạo và khởi động máy này, bạn cần cài đặt thêm iOS \(maxMajor) Runtime.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Button("Mở Kho iOS Runtime để tải iOS \(maxMajor)...") {
+                        showingRuntimesSheet = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .controlSize(.small)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(8)
+            }
+
             Spacer()
 
             HStack {
@@ -383,17 +443,22 @@ struct CreateIOSDeviceSheet: View {
                     Task {
                         let devType = selectedDeviceTypeId.isEmpty ? (manager.availableIOSDeviceTypes.first?.identifier ?? "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro") : selectedDeviceTypeId
                         let runtime = selectedRuntimeId.isEmpty ? (manager.availableIOSRuntimes.first?.identifier ?? "com.apple.CoreSimulator.SimRuntime.iOS-26-3") : selectedRuntimeId
-                        await manager.createCustomIOSDevice(name: name, deviceType: devType, runtime: runtime)
-                        isPresented = false
+                        let res = await manager.createCustomIOSDevice(name: name, deviceType: devType, runtime: runtime)
+                        if res.success {
+                            isPresented = false
+                        } else {
+                            errorMessage = res.error
+                            showingErrorAlert = true
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || manager.isBusy)
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || !isCompatible || manager.isBusy)
             }
         }
         .padding(24)
-        .frame(width: 480, height: 380)
+        .frame(width: 500, height: isCompatible ? 400 : 470)
         .onAppear {
             if let first = manager.availableIOSDeviceTypes.first {
                 selectedDeviceTypeId = first.identifier
@@ -401,6 +466,175 @@ struct CreateIOSDeviceSheet: View {
             if let firstRt = manager.availableIOSRuntimes.first {
                 selectedRuntimeId = firstRt.identifier
             }
+        }
+        .sheet(isPresented: $showingRuntimesSheet) {
+            IOSRuntimesManagerSheet(isPresented: $showingRuntimesSheet)
+        }
+        .alert("Không thể tạo iOS Simulator", isPresented: $showingErrorAlert) {
+            Button("Đóng", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Đã xảy ra lỗi khi tạo Simulator.")
+        }
+    }
+}
+
+// MARK: - iOS Runtimes Manager Sheet
+
+struct IOSRuntimesManagerSheet: View {
+    @Binding var isPresented: Bool
+    @ObservedObject var manager = DeviceManager.shared
+
+    @State private var errorMessage: String? = nil
+    @State private var showingErrorAlert = false
+    @State private var successMessage: String? = nil
+    @State private var showingSuccessAlert = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Kho iOS Simulator Runtimes")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                    Text("Quản lý và tải thêm các phiên bản iOS (iOS 18, 17, 16...) để chạy các dòng thiết bị cũ (iPhone 8, X, v.v.).")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 12) {
+                    ForEach(manager.availableDownloadableIOSRuntimes) { rt in
+                        HStack(spacing: 14) {
+                            ZStack {
+                                Circle()
+                                    .fill(rt.isInstalled ? Color.green.opacity(0.15) : Color.gray.opacity(0.12))
+                                    .frame(width: 40, height: 40)
+                                Image(systemName: rt.isInstalled ? "checkmark.circle.fill" : "arrow.down.circle")
+                                    .font(.title3)
+                                    .foregroundColor(rt.isInstalled ? .green : .secondary)
+                            }
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack(spacing: 8) {
+                                    Text(rt.name)
+                                        .font(.headline)
+                                    Text(rt.sizeDescription)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Text(rt.compatibleDevicesDescription)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            if rt.isInstalled {
+                                Text("Đã cài đặt")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.green)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Color.green.opacity(0.1))
+                                    .cornerRadius(8)
+                            } else {
+                                Button {
+                                    Task {
+                                        let res = await manager.downloadSpecificIOSRuntime(version: rt.buildVersion)
+                                        if res.success {
+                                            successMessage = "Đã cài đặt thành công \(rt.name)!"
+                                            showingSuccessAlert = true
+                                        } else {
+                                            errorMessage = res.error
+                                            showingErrorAlert = true
+                                        }
+                                    }
+                                } label: {
+                                    Label("Tải về", systemImage: "arrow.down")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.blue)
+                                .disabled(manager.isBusy)
+                            }
+                        }
+                        .padding(12)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(10)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Divider()
+
+            HStack {
+                Button {
+                    let panel = NSOpenPanel()
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    panel.canChooseFiles = true
+                    panel.message = "Chọn file iOS Simulator Runtime (.dmg hoặc .simruntime) đã tải:"
+                    if let dmgType = UTType(filenameExtension: "dmg") {
+                        panel.allowedContentTypes = [dmgType, UTType(filenameExtension: "simruntime") ?? .data]
+                    }
+                    if panel.runModal() == .OK, let url = panel.url {
+                        Task {
+                            let res = await manager.addIOSRuntimeFromFile(path: url.path)
+                            if res.success {
+                                successMessage = "Đã nạp runtime thành công từ \(url.lastPathComponent)!"
+                                showingSuccessAlert = true
+                            } else {
+                                errorMessage = res.error
+                                showingErrorAlert = true
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Nạp file .dmg thủ công...", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(manager.isBusy)
+
+                Button {
+                    Task { await manager.openXcodeSettings() }
+                } label: {
+                    Label("Mở Xcode Settings", systemImage: "gearshape")
+                }
+                .buttonStyle(.bordered)
+                .help("Mở Xcode -> Settings -> Platforms để tải trực tiếp từ Apple")
+
+                Spacer()
+
+                Button("Đóng") {
+                    isPresented = false
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(24)
+        .frame(width: 580, height: 460)
+        .alert("Lỗi tải / cài đặt Runtime", isPresented: $showingErrorAlert) {
+            Button("Đóng", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "Đã xảy ra lỗi.")
+        }
+        .alert("Thành công", isPresented: $showingSuccessAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(successMessage ?? "")
         }
     }
 }

@@ -17,11 +17,13 @@ public class DeviceManager: ObservableObject {
     // Available metadata for creation
     @Published public var availableIOSDeviceTypes: [IOSDeviceType] = []
     @Published public var availableIOSRuntimes: [IOSRuntime] = []
+    @Published public var availableDownloadableIOSRuntimes: [IOSDownloadableRuntime] = []
     @Published public var availableAndroidSystemImages: [AndroidSystemImage] = []
     @Published public var availableAndroidDeviceProfiles: [AndroidDeviceProfile] = []
+    @Published public var brokenAndroidAVDs: [String] = []
 
     // Version & Updates
-    public let appVersion: String = "1.2.0"
+    public let appVersion: String = "1.2.1"
     @Published public var updateAvailable: String? = nil
     @Published public var updateDownloadUrl: String? = nil
     @Published public var updateReleaseNotes: String? = nil
@@ -180,6 +182,7 @@ public class DeviceManager: ObservableObject {
                     env["ANDROID_HOME"] = currentAndroidHome
                     env["ANDROID_SDK_ROOT"] = currentAndroidHome
                 }
+                env["SKIP_JDK_VERSION_CHECK"] = "true"
                 let extraBinDirs = [
                     "/opt/homebrew/bin",
                     "/opt/homebrew/sbin",
@@ -475,13 +478,23 @@ public class DeviceManager: ObservableObject {
         busyMessage = ""
     }
 
-    public func createCustomIOSDevice(name: String, deviceType: String, runtime: String) async {
+    @discardableResult
+    public func createCustomIOSDevice(name: String, deviceType: String, runtime: String) async -> (success: Bool, error: String?) {
         isBusy = true
         busyMessage = "Đang tạo iOS Simulator: \(name)..."
-        _ = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "create", name, deviceType, runtime])
+        let result = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "create", name, deviceType, runtime])
         await fetchIOSDevices()
         isBusy = false
         busyMessage = ""
+        if result.exitCode == 0 {
+            return (true, nil)
+        } else {
+            var errMsg = !result.stderr.isEmpty ? result.stderr : (!result.stdout.isEmpty ? result.stdout : "Lỗi khi tạo iOS Simulator")
+            if errMsg.contains("Incompatible device") {
+                errMsg = "Thiết bị này không tương thích với phiên bản iOS đã chọn. Các dòng máy cũ (như iPhone 8, iPhone 8 Plus, iPhone X, iPhone 7, iPhone 6s) chỉ hỗ trợ tối đa iOS 16 hoặc iOS 15. Bạn hãy vào 'Kho iOS Runtime' để tải thêm bản iOS tương thích."
+            }
+            return (false, errMsg)
+        }
     }
 
     public func fetchAvailableIOSMetadata() async {
@@ -515,16 +528,79 @@ public class DeviceManager: ObservableObject {
                 let name: String
                 let identifier: String
                 let productFamily: String?
+                let minRuntimeVersionString: String?
+                let maxRuntimeVersionString: String?
             }
             if let decoded = try? JSONDecoder().decode(DevTypeResponse.self, from: data) {
                 self.availableIOSDeviceTypes = decoded.devicetypes.filter {
                     let fam = $0.productFamily ?? ""
                     return fam == "iPhone" || fam == "iPad"
                 }.map {
-                    IOSDeviceType(name: $0.name, identifier: $0.identifier, productFamily: $0.productFamily ?? "iPhone")
+                    IOSDeviceType(
+                        name: $0.name,
+                        identifier: $0.identifier,
+                        productFamily: $0.productFamily ?? "iPhone",
+                        minRuntimeVersionString: $0.minRuntimeVersionString,
+                        maxRuntimeVersionString: $0.maxRuntimeVersionString
+                    )
                 }
             }
         }
+
+        // Standard downloadable runtimes
+        let knownDownloadable: [(name: String, buildVersion: String, size: String, devices: String, matchPattern: String)] = [
+            ("iOS 18.0 Universal Simulator", "18.0", "~8.4 GB", "iPhone 11 trở lên, iPad A16, iPad Air/Pro M2-M5", "18."),
+            ("iOS 17.5 Universal Simulator", "17.5", "~7.3 GB", "iPhone XR, XS, 11, 12, 13, 14, 15", "17."),
+            ("iOS 16.4 Universal Simulator", "16.4", "~6.2 GB", "Hỗ trợ iPhone 8, iPhone 8 Plus, iPhone X, iPad Gen 5/6", "16.4"),
+            ("iOS 16.0 Universal Simulator", "16.0", "~6.2 GB", "Hỗ trợ iPhone 8, iPhone 8 Plus, iPhone X, iPad Gen 5/6", "16.0")
+        ]
+
+        self.availableDownloadableIOSRuntimes = knownDownloadable.map { item in
+            let installed = self.availableIOSRuntimes.contains { $0.version.contains(item.matchPattern) }
+            return IOSDownloadableRuntime(
+                name: item.name,
+                buildVersion: item.buildVersion,
+                sizeDescription: item.size,
+                compatibleDevicesDescription: item.devices,
+                isInstalled: installed
+            )
+        }
+    }
+
+    public func downloadSpecificIOSRuntime(version: String) async -> (success: Bool, error: String?) {
+        isBusy = true
+        busyMessage = "Đang tải iOS \(version) Simulator qua xcodebuild (vui lòng chờ vài phút)..."
+        let result = await executeCommand("/usr/bin/xcodebuild", arguments: ["-downloadPlatform", "iOS", "-buildVersion", version])
+        await fetchAvailableIOSMetadata()
+        await fetchIOSDevices()
+        isBusy = false
+        busyMessage = ""
+        if result.exitCode == 0 {
+            return (true, nil)
+        } else {
+            let errMsg = !result.stderr.isEmpty ? result.stderr : (!result.stdout.isEmpty ? result.stdout : "Không thể tải iOS \(version)")
+            return (false, errMsg)
+        }
+    }
+
+    public func addIOSRuntimeFromFile(path: String) async -> (success: Bool, error: String?) {
+        isBusy = true
+        busyMessage = "Đang cài đặt Runtime từ file \(URL(fileURLWithPath: path).lastPathComponent)..."
+        let result = await executeCommand("/usr/bin/xcrun", arguments: ["simctl", "runtime", "add", path])
+        await fetchAvailableIOSMetadata()
+        await fetchIOSDevices()
+        isBusy = false
+        busyMessage = ""
+        if result.exitCode == 0 {
+            return (true, nil)
+        } else {
+            let errMsg = !result.stderr.isEmpty ? result.stderr : (!result.stdout.isEmpty ? result.stdout : "Lỗi khi nạp runtime từ file")
+            return (false, errMsg)
+        }
+    }
+
+    public func openXcodeSettings() async {
+        _ = await executeCommand("/usr/bin/open", arguments: ["-a", "Xcode"])
     }
 
     public func downloadIOSPlatform() async {
@@ -566,33 +642,58 @@ public class DeviceManager: ObservableObject {
 
         // Method 3: avdmanager list avd
         let avdResult = await executeCommand(avdmanagerPath, arguments: ["list", "avd"])
-        if avdResult.exitCode == 0 && !avdResult.stdout.isEmpty {
-            let blocks = avdResult.stdout.components(separatedBy: "---------")
+        var rawOutput = avdResult.stdout
+        if rawOutput.isEmpty && !avdResult.stderr.isEmpty {
+            rawOutput = avdResult.stderr
+        }
+
+        var brokenNames: [String] = []
+
+        if !rawOutput.isEmpty {
+            var validSection = rawOutput
+            if let brokenRange = rawOutput.range(of: "The following Android Virtual Devices could not be loaded:") {
+                let brokenPart = String(rawOutput[brokenRange.upperBound...])
+                validSection = String(rawOutput[..<brokenRange.lowerBound])
+
+                for line in brokenPart.components(separatedBy: "\n") {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if trimmed.hasPrefix("Name: ") {
+                        let bName = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                        if !bName.isEmpty && !brokenNames.contains(bName) {
+                            brokenNames.append(bName)
+                        }
+                    }
+                }
+            }
+
+            let blocks = validSection.components(separatedBy: "---------")
             for block in blocks {
                 var name = ""
                 var device = ""
                 var target = ""
                 var path = ""
 
-                for line in block.components(separatedBy: "\n") {
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                for rawLine in block.components(separatedBy: "\n") {
+                    let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
                     if trimmed.hasPrefix("Name: ") {
-                        name = String(trimmed.dropFirst(6))
+                        name = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
                     } else if trimmed.hasPrefix("Device: ") {
-                        device = String(trimmed.dropFirst(8))
+                        device = String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespaces)
                     } else if trimmed.hasPrefix("Target: ") || trimmed.hasPrefix("Based on: ") {
-                        target = String(trimmed.dropFirst(line.contains("Based on: ") ? 10 : 8))
+                        target = String(trimmed.dropFirst(trimmed.contains("Based on: ") ? 10 : 8)).trimmingCharacters(in: .whitespaces)
                     } else if trimmed.hasPrefix("Path: ") {
-                        path = String(trimmed.dropFirst(6))
+                        path = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
                     }
                 }
 
-                if !name.isEmpty {
+                if !name.isEmpty && name != "Available Android Virtual Devices:" && !brokenNames.contains(name) {
                     let isRunning = runningAvdNames.contains(name)
                     avds.append(AndroidAVD(name: name, device: device, target: target, path: path, isRunning: isRunning))
                 }
             }
         }
+
+        self.brokenAndroidAVDs = brokenNames
 
         // Fallback: ~/.android/avd/*.ini
         if avds.isEmpty {
@@ -602,8 +703,10 @@ public class DeviceManager: ObservableObject {
             if let files = try? fm.contentsOfDirectory(atPath: avdDir) {
                 for file in files where file.hasSuffix(".ini") {
                     let name = String(file.dropLast(4))
-                    let isRunning = runningAvdNames.contains(name)
-                    avds.append(AndroidAVD(name: name, device: "Pixel", target: "Android", path: "\(avdDir)/\(name).avd", isRunning: isRunning))
+                    if !brokenNames.contains(name) {
+                        let isRunning = runningAvdNames.contains(name)
+                        avds.append(AndroidAVD(name: name, device: "Pixel", target: "Android", path: "\(avdDir)/\(name).avd", isRunning: isRunning))
+                    }
                 }
             }
         }
@@ -748,6 +851,21 @@ public class DeviceManager: ObservableObject {
         busyMessage = ""
     }
 
+    public func deleteBrokenAVD(name: String) async {
+        isBusy = true
+        busyMessage = "Đang dọn dẹp máy ảo hỏng \(name)..."
+        _ = await executeCommand(avdmanagerPath, arguments: ["delete", "avd", "-n", name])
+        let fm = FileManager.default
+        let homeDir = fm.homeDirectoryForCurrentUser.path
+        let avdIni = "\(homeDir)/.android/avd/\(name).ini"
+        let avdDir = "\(homeDir)/.android/avd/\(name).avd"
+        try? fm.removeItem(atPath: avdIni)
+        try? fm.removeItem(atPath: avdDir)
+        await fetchAndroidAVDs()
+        isBusy = false
+        busyMessage = ""
+    }
+
     @discardableResult
     public func createCustomAndroidAVD(name: String, deviceId: String, systemImage: String) async -> (success: Bool, error: String?) {
         isBusy = true
@@ -784,7 +902,12 @@ public class DeviceManager: ObservableObject {
         isBusy = false
         busyMessage = ""
 
-        if result.exitCode == 0 {
+        let fm = FileManager.default
+        let homeDir = fm.homeDirectoryForCurrentUser.path
+        let avdIni = "\(homeDir)/.android/avd/\(safeName).ini"
+        let createdSuccessfully = fm.fileExists(atPath: avdIni) || self.androidDevices.contains(where: { $0.name == safeName })
+
+        if createdSuccessfully {
             return (true, nil)
         } else {
             let errMsg = !result.stderr.isEmpty ? result.stderr : (!result.stdout.isEmpty ? result.stdout : "Lỗi khi tạo AVD (exit code \(result.exitCode))")
@@ -809,15 +932,40 @@ public class DeviceManager: ObservableObject {
             return AndroidSystemImage(packagePath: item.id, name: item.name, apiLevel: item.api, isInstalled: installed)
         }
 
-        self.availableAndroidDeviceProfiles = [
-            AndroidDeviceProfile(deviceId: "pixel_9_pro", name: "Pixel 9 Pro"),
-            AndroidDeviceProfile(deviceId: "pixel_9", name: "Pixel 9"),
-            AndroidDeviceProfile(deviceId: "pixel_8_pro", name: "Pixel 8 Pro"),
-            AndroidDeviceProfile(deviceId: "pixel_8", name: "Pixel 8"),
-            AndroidDeviceProfile(deviceId: "pixel_7_pro", name: "Pixel 7 Pro"),
-            AndroidDeviceProfile(deviceId: "pixel_tablet", name: "Pixel Tablet"),
-            AndroidDeviceProfile(deviceId: "pixel_fold", name: "Pixel Fold")
-        ]
+        // Dynamically query supported devices from SDK
+        let devResult = await executeCommand(avdmanagerPath, arguments: ["list", "device"])
+        var profiles: [AndroidDeviceProfile] = []
+        if !devResult.stdout.isEmpty {
+            let blocks = devResult.stdout.components(separatedBy: "---------")
+            for block in blocks {
+                var devId = ""
+                var devName = ""
+                for line in block.components(separatedBy: "\n") {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    if trimmed.hasPrefix("id: ") && trimmed.contains("or \"") {
+                        if let q1 = trimmed.range(of: "or \""), let q2 = trimmed.range(of: "\"", range: q1.upperBound..<trimmed.endIndex) {
+                            devId = String(trimmed[q1.upperBound..<q2.lowerBound])
+                        }
+                    }
+                    if trimmed.hasPrefix("Name: ") {
+                        devName = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                    }
+                }
+                if !devId.isEmpty && !devName.isEmpty && (devId.hasPrefix("pixel") || devId.contains("phone") || devId.contains("tablet")) {
+                    profiles.append(AndroidDeviceProfile(deviceId: devId, name: devName))
+                }
+            }
+        }
+
+        if profiles.isEmpty {
+            profiles = [
+                AndroidDeviceProfile(deviceId: "pixel_8", name: "Pixel 8"),
+                AndroidDeviceProfile(deviceId: "pixel_7", name: "Pixel 7"),
+                AndroidDeviceProfile(deviceId: "pixel_6", name: "Pixel 6"),
+                AndroidDeviceProfile(deviceId: "medium_phone", name: "Medium Phone")
+            ]
+        }
+        self.availableAndroidDeviceProfiles = profiles
     }
 
     public func downloadAndroidSystemImage(_ packagePath: String) async {

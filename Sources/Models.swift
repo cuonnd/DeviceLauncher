@@ -48,6 +48,39 @@ public struct IOSDeviceType: Identifiable, Hashable {
     public let name: String
     public let identifier: String
     public let productFamily: String
+    public var minRuntimeVersionString: String?
+    public var maxRuntimeVersionString: String?
+
+    public func isCompatible(withRuntimeVersion runtimeVersion: String) -> Bool {
+        let runtimeMajor = parseMajorVersion(runtimeVersion)
+        if let maxStr = maxRuntimeVersionString {
+            let maxMajor = parseMajorVersion(maxStr)
+            if runtimeMajor > maxMajor {
+                return false
+            }
+        }
+        if let minStr = minRuntimeVersionString {
+            let minMajor = parseMajorVersion(minStr)
+            if runtimeMajor < minMajor {
+                return false
+            }
+        }
+        return true
+    }
+
+    public var maxMajorVersion: Int? {
+        guard let maxStr = maxRuntimeVersionString else { return nil }
+        let major = parseMajorVersion(maxStr)
+        return major < 1000 ? major : nil
+    }
+
+    private func parseMajorVersion(_ versionString: String) -> Int {
+        let parts = versionString.split(separator: ".")
+        if let first = parts.first, let val = Int(first) {
+            return val
+        }
+        return 0
+    }
 }
 
 public struct IOSRuntime: Identifiable, Hashable {
@@ -55,6 +88,15 @@ public struct IOSRuntime: Identifiable, Hashable {
     public let name: String
     public let identifier: String
     public let version: String
+}
+
+public struct IOSDownloadableRuntime: Identifiable, Hashable {
+    public var id: String { buildVersion }
+    public let name: String
+    public let buildVersion: String
+    public let sizeDescription: String
+    public let compatibleDevicesDescription: String
+    public var isInstalled: Bool
 }
 
 public struct AndroidSystemImage: Identifiable, Hashable {

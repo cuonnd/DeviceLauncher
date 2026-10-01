@@ -88,6 +88,38 @@ public struct AndroidView: View {
 
             Divider()
 
+            if !manager.brokenAndroidAVDs.isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(manager.brokenAndroidAVDs, id: \.self) { brokenName in
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Phát hiện máy ảo không hợp lệ: \(brokenName)")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.orange)
+                                Text("Máy ảo này bị lỗi cấu hình phần cứng không tồn tại. Bấm nút để dọn dẹp sạch tập tin lỗi.")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Button("Dọn dẹp") {
+                                Task { await manager.deleteBrokenAVD(name: brokenName) }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color.orange.opacity(0.12))
+                .cornerRadius(8)
+                .padding(.horizontal)
+                .padding(.top, 8)
+            }
+
             // AVD list
             if manager.androidDevices.isEmpty {
                 VStack(spacing: 16) {
@@ -432,6 +464,9 @@ struct CreateAndroidAVDSheet: View {
         .padding(24)
         .frame(width: 500, height: 440)
         .onAppear {
+            if let firstDev = manager.availableAndroidDeviceProfiles.first {
+                selectedDeviceId = firstDev.deviceId
+            }
             if let installedImg = manager.availableAndroidSystemImages.first(where: { $0.isInstalled }) {
                 selectedPackagePath = installedImg.packagePath
             } else if let first = manager.availableAndroidSystemImages.first {
