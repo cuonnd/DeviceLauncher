@@ -1,0 +1,14 @@
+# Build artifacts
+build/
+*.app/
+*.dSYM/
+*.log
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# User settings
+.build/
+.swiftpm/
