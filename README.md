@@ -28,34 +28,88 @@
 
 ---
 
-## 🛠️ Hướng dẫn cài đặt & Chạy ứng dụng
+## 📺 Video Hướng Dẫn Cài Đặt & Sử Dụng
 
-### Cách 1: Tải file nén phát hành (Release)
-1. Tải file **[DeviceLauncher-v1.0.0.zip](https://github.com/cuonnd/DeviceLauncher/releases/download/v1.0.0/DeviceLauncher-v1.0.0.zip)**.
-2. Giải nén và kéo `DeviceLauncher.app` vào thư mục `/Applications`.
-3. **Lưu ý khi mở lần đầu trên máy Mac khác (Lỗi "is damaged and can't be opened")**:
-   Do app chưa đăng ký chứng chỉ trả phí với Apple ($99/năm), cơ chế Gatekeeper của macOS sẽ gắn nhãn cách ly (quarantine). Bạn chỉ cần thực hiện **1 trong các cách sau** để mở:
-   - **Cách A (Nhanh nhất)**: Chạy file `Bypass_Gatekeeper.command` có sẵn trong file zip tải về.
-   - **Cách B (Qua Terminal)**: Mở Terminal và gõ:
-     ```bash
-     xattr -cr /Applications/DeviceLauncher.app
-     ```
-   - **Cách C**: Chuột phải vào `DeviceLauncher.app` -> Chọn **Open** -> Chọn **Open**.
+> 🎬 **Xem video hướng dẫn chi tiết trên YouTube:**  
+> 👉 [**Hướng dẫn cài đặt & sử dụng DeviceLauncher trên macOS (YouTube)**](https://www.youtube.com) *(Cập nhật link video của bạn tại đây)*
 
-### Cách 2: Build từ mã nguồn (Source)
-Chạy lệnh sau tại thư mục clone dự án:
+---
+
+## 🛠️ Hướng dẫn cài đặt chi tiết từng bước (A - Z)
+
+### 📥 Bước 1: Tải ứng dụng
+Tải gói ứng dụng đã build sẵn từ mục Releases:
+- 🔗 **Link tải trực tiếp:** [**DeviceLauncher-v1.0.0.zip**](https://github.com/cuonnd/DeviceLauncher/releases/download/v1.0.0/DeviceLauncher-v1.0.0.zip)
+
+---
+
+### 📂 Bước 2: Cài đặt vào máy Mac
+1. Mở file `DeviceLauncher-v1.0.0.zip` vừa tải về trong thư mục **Downloads**.
+2. Kéo icon **`DeviceLauncher.app`** vào thư mục **Applications** (Ứng dụng) của máy Mac.
+
+---
+
+### 🛡️ Bước 3: Mở ứng dụng lần đầu (Xử lý lỗi Gatekeeper)
+
+> [!IMPORTANT]
+> Vì ứng dụng chưa đăng ký chứng chỉ thương mại trả phí của Apple ($99/năm), macOS sẽ hiển thị cảnh báo bảo mật Gatekeeper:  
+> **`“DeviceLauncher” is damaged and can’t be opened. You should move it to the Trash.`**  
+> Đây là cơ chế cách ly file internet (`com.apple.quarantine`) của macOS, không phải app bị lỗi!
+
+Bạn chọn **1 trong 3 cách sau** để vượt qua cảnh báo này (chỉ cần làm duy nhất 1 lần):
+
+#### ⚡ Cách A: Chạy file `.command` có sẵn (Nhanh & không cần gõ lệnh)
+1. Trong thư mục vừa giải nén, nhấp đúp (Double-click) vào file **`Bypass_Gatekeeper.command`**.
+2. Một cửa sổ Terminal sẽ hiện lên thông báo gỡ cách ly thành công và tự động mở app.
+
+#### ⌨️ Cách B: Dùng lệnh 1 dòng trong Terminal
+Mở ứng dụng **Terminal** trên Mac (bấm `Command + Space`, gõ `Terminal`), sau đó dán dòng lệnh sau và nhấn `Enter`:
 ```bash
-chmod +x build.sh sim.sh
-./build.sh --install --run
+xattr -cr /Applications/DeviceLauncher.app
+```
+Sau đó bạn có thể mở ứng dụng bình thường từ **Launchpad** hoặc thư mục **Applications**.
+
+#### ⚙️ Cách C: Mở qua Cài đặt hệ thống (System Settings)
+1. Giữ phím `Control` và bấm chuột vào `DeviceLauncher.app` -> chọn **Open**.
+2. Nếu macOS vẫn chặn: Vào **Cài đặt hệ thống (System Settings)** ➔ **Quyền riêng tư & Bảo mật (Privacy & Security)** ➔ Cuộn xuống mục *Bảo mật* và bấm nút **"Open Anyway"** (Vẫn mở).
+
+---
+
+### 🚀 Bước 4: Thiết lập môi trường & Bật máy ảo
+
+1. **Khởi chạy ứng dụng**:
+   - Khi mở lên, bạn sẽ thấy icon điện thoại & máy tính ở **góc phải thanh Menu Bar** trên cùng màn hình.
+   - Bấm vào icon này để mở danh sách nhanh hoặc bấm **"Mở Bảng Điều Khiển Chi Tiết..."** để mở giao diện quản lý đầy đủ.
+
+2. **Tự động Setup nếu máy chưa có Simulator/Emulator**:
+   - Bấm vào tab **"Chuẩn đoán & Setup"** (hình ống nghe bác sĩ 🩺).
+   - Bấm nút **"🚀 Tự động Setup Bản Mới Nhất"** (Auto-Setup):
+     - App sẽ tự động kiểm tra biến môi trường Java & Android SDK.
+     - Tự động tạo thiết bị **iPhone 17 Pro** (iOS 26.3) nếu chưa có.
+     - Tự động tải Android System Image và tạo máy ảo **Pixel 9 Pro (API 37)**.
+
+3. **Bật thiết bị**:
+   - Chỉ cần 1 click vào nút **"Bật & Mở"** (cho iOS) hoặc **"Bật Emulator"** (cho Android). Thiết bị sẽ khởi động và sẵn sàng dùng ngay!
+
+---
+
+### 💻 Dành cho lập trình viên (CLI & Tự build từ mã nguồn)
+
+#### 1. Dùng lệnh nhanh `sim.sh` trong Terminal:
+```bash
+./sim.sh ios      # Bật ngay iOS Simulator (iPhone 17 Pro)
+./sim.sh android  # Bật ngay Android Emulator (Pixel 9 Pro API 37)
+./sim.sh setup    # Tự động setup bản mới nhất cho cả iOS và Android nếu thiếu
+./sim.sh list     # Xem danh sách máy ảo hiện có
+./sim.sh app      # Mở giao diện App đồ họa
 ```
 
-### Cách 2: Sử dụng dòng lệnh `sim.sh`
+#### 2. Tự build App từ mã nguồn:
 ```bash
-./sim.sh ios      # Bật ngay iOS Simulator
-./sim.sh android  # Bật ngay Android Emulator (tự setup Pixel 9 Pro nếu chưa có)
-./sim.sh setup    # Tự động setup bản mới nhất cho cả iOS và Android
-./sim.sh list     # Xem danh sách máy ảo
-./sim.sh app      # Mở giao diện App macOS
+git clone https://github.com/cuonnd/DeviceLauncher.git
+cd DeviceLauncher
+chmod +x build.sh sim.sh
+./build.sh --install --run
 ```
 
 ---
