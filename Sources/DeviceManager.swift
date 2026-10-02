@@ -23,7 +23,7 @@ public class DeviceManager: ObservableObject {
     @Published public var brokenAndroidAVDs: [String] = []
 
     // Version & Updates
-    public let appVersion: String = "1.2.1"
+    public let appVersion: String = "1.2.2"
     @Published public var updateAvailable: String? = nil
     @Published public var updateDownloadUrl: String? = nil
     @Published public var updateReleaseNotes: String? = nil
@@ -59,55 +59,90 @@ public class DeviceManager: ObservableObject {
 
     public func detectEnvironment() {
         let fm = FileManager.default
+        let homeDir = fm.homeDirectoryForCurrentUser.path
 
-        // Detect JAVA_HOME
-        let javaCandidates = [
-            "/opt/homebrew/opt/openjdk@17",
-            "/opt/homebrew/opt/openjdk@21",
-            "/opt/homebrew/opt/openjdk",
-            "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
-            "/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home",
-            "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home",
-            "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home",
-            ProcessInfo.processInfo.environment["JAVA_HOME"] ?? ""
-        ]
-        for path in javaCandidates where !path.isEmpty {
-            if fm.fileExists(atPath: "\(path)/bin/java") {
-                javaHome = path
-                break
+        // 1. Detect JAVA_HOME
+        // Try /usr/libexec/java_home first (official macOS Java locator)
+        if let jhome = runQuickProcess("/usr/libexec/java_home"), !jhome.isEmpty, fm.fileExists(atPath: "\(jhome)/bin/java") {
+            javaHome = jhome
+        }
+
+        if javaHome.isEmpty {
+            var javaCandidates = [
+                "/opt/homebrew/opt/openjdk@17",
+                "/opt/homebrew/opt/openjdk@21",
+                "/opt/homebrew/opt/openjdk",
+                "/usr/local/opt/openjdk",
+                "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
+                "/Applications/Android Studio.app/Contents/jre/Contents/Home",
+                "\(homeDir)/Library/Java/JavaVirtualMachines",
+                ProcessInfo.processInfo.environment["JAVA_HOME"] ?? ""
+            ]
+            if let jvms = try? fm.contentsOfDirectory(atPath: "/Library/Java/JavaVirtualMachines") {
+                for jvm in jvms {
+                    javaCandidates.append("/Library/Java/JavaVirtualMachines/\(jvm)/Contents/Home")
+                }
+            }
+            if let userJvms = try? fm.contentsOfDirectory(atPath: "\(homeDir)/Library/Java/JavaVirtualMachines") {
+                for jvm in userJvms {
+                    javaCandidates.append("\(homeDir)/Library/Java/JavaVirtualMachines/\(jvm)/Contents/Home")
+                }
+            }
+            for path in javaCandidates where !path.isEmpty {
+                if fm.fileExists(atPath: "\(path)/bin/java") {
+                    javaHome = path
+                    break
+                }
             }
         }
 
-        // Detect ANDROID_HOME
-        let homeDir = fm.homeDirectoryForCurrentUser.path
+        // 2. Detect ANDROID_HOME (User Library first, then Homebrew, etc.)
         let androidCandidates = [
-            "/opt/homebrew/share/android-commandlinetools",
             "\(homeDir)/Library/Android/sdk",
+            "/opt/homebrew/share/android-commandlinetools",
             "/usr/local/share/android-sdk",
-            ProcessInfo.processInfo.environment["ANDROID_HOME"] ?? ""
+            ProcessInfo.processInfo.environment["ANDROID_HOME"] ?? "",
+            ProcessInfo.processInfo.environment["ANDROID_SDK_ROOT"] ?? ""
         ]
         for path in androidCandidates where !path.isEmpty {
-            if fm.fileExists(atPath: "\(path)/emulator/emulator") || fm.fileExists(atPath: "\(path)/cmdline-tools") {
+            if fm.fileExists(atPath: "\(path)/emulator/emulator") ||
+               fm.fileExists(atPath: "\(path)/cmdline-tools") ||
+               fm.fileExists(atPath: "\(path)/platform-tools") {
                 androidHome = path
                 break
             }
         }
 
-        // Detect tools inside Android SDK
+        // 3. Detect tools inside Android SDK
         if !androidHome.isEmpty {
             let possibleEmulator = "\(androidHome)/emulator/emulator"
             if fm.fileExists(atPath: possibleEmulator) {
                 emulatorPath = possibleEmulator
             }
 
-            let possibleSdkmanager = "\(androidHome)/cmdline-tools/latest/bin/sdkmanager"
+            let cmdlineBase = "\(androidHome)/cmdline-tools"
+            let possibleSdkmanager = "\(cmdlineBase)/latest/bin/sdkmanager"
             if fm.fileExists(atPath: possibleSdkmanager) {
                 sdkmanagerPath = possibleSdkmanager
             }
 
-            let possibleAvdmanager = "\(androidHome)/cmdline-tools/latest/bin/avdmanager"
+            let possibleAvdmanager = "\(cmdlineBase)/latest/bin/avdmanager"
             if fm.fileExists(atPath: possibleAvdmanager) {
                 avdmanagerPath = possibleAvdmanager
+            }
+
+            // Fallback for versioned subfolders (e.g. cmdline-tools/13.0/bin/avdmanager)
+            if (sdkmanagerPath.isEmpty || avdmanagerPath.isEmpty), let subdirs = try? fm.contentsOfDirectory(atPath: cmdlineBase) {
+                for sub in subdirs.sorted().reversed() {
+                    let s = "\(cmdlineBase)/\(sub)/bin/sdkmanager"
+                    let a = "\(cmdlineBase)/\(sub)/bin/avdmanager"
+                    if sdkmanagerPath.isEmpty && fm.fileExists(atPath: s) {
+                        sdkmanagerPath = s
+                    }
+                    if avdmanagerPath.isEmpty && fm.fileExists(atPath: a) {
+                        avdmanagerPath = a
+                    }
+                }
             }
 
             let possibleAdb = "\(androidHome)/platform-tools/adb"
@@ -116,7 +151,7 @@ public class DeviceManager: ObservableObject {
             }
         }
 
-        // Fallbacks
+        // Fallbacks via PATH
         if emulatorPath.isEmpty {
             emulatorPath = findExecutable(name: "emulator") ?? "/opt/homebrew/share/android-commandlinetools/emulator/emulator"
         }
@@ -131,6 +166,28 @@ public class DeviceManager: ObservableObject {
         }
     }
 
+    private func runQuickProcess(_ path: String, args: [String] = []) -> String? {
+        guard FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = FileHandle.nullDevice
+        do {
+            try p.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            if p.terminationStatus == 0 {
+                let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (out?.isEmpty == false) ? out : nil
+            }
+        } catch {
+            return nil
+        }
+        return nil
+    }
+
     private func findExecutable(name: String) -> String? {
         let fm = FileManager.default
         let pathEnv = ProcessInfo.processInfo.environment["PATH"] ?? ""
@@ -138,12 +195,15 @@ public class DeviceManager: ObservableObject {
             "/opt/homebrew/bin",
             "/usr/local/bin",
             "/usr/bin",
+            "\(androidHome)/cmdline-tools/latest/bin",
+            "\(androidHome)/emulator",
+            "\(androidHome)/platform-tools",
             "/opt/homebrew/share/android-commandlinetools/emulator",
             "/opt/homebrew/share/android-commandlinetools/cmdline-tools/latest/bin",
             "/opt/homebrew/share/android-commandlinetools/platform-tools"
         ]
         let allPaths = (pathEnv.components(separatedBy: ":") + extraPaths)
-        for dir in allPaths {
+        for dir in allPaths where !dir.isEmpty {
             let fullPath = "\(dir)/\(name)"
             if fm.isExecutableFile(atPath: fullPath) {
                 return fullPath
@@ -230,15 +290,32 @@ public class DeviceManager: ObservableObject {
                 process.standardOutput = outPipe
                 process.standardError = errPipe
 
+                var outData = Data()
+                var errData = Data()
+                let group = DispatchGroup()
+
+                group.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                    group.leave()
+                }
+
+                group.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    group.leave()
+                }
+
                 do {
                     try process.run()
                     if let input = input, let data = input.data(using: .utf8) {
                         inPipe.fileHandleForWriting.write(data)
                     }
                     try? inPipe.fileHandleForWriting.close()
+
                     process.waitUntilExit()
-                    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    group.wait()
+
                     let stdoutStr = String(data: outData, encoding: .utf8) ?? ""
                     let stderrStr = String(data: errData, encoding: .utf8) ?? ""
                     let exitCode = process.terminationStatus
@@ -766,42 +843,30 @@ public class DeviceManager: ObservableObject {
         return ascii
     }
 
-    public func createLatestAndroidAVD(name: String = "Pixel_9_Pro_API_37") async {
+    public func createLatestAndroidAVD(name: String? = nil) async {
         isBusy = true
-        let safeName = Self.sanitizeAvdName(name)
-        busyMessage = "Đang kiểm tra & tạo AVD \(safeName)..."
+        busyMessage = "Đang kiểm tra gói System Image có sẵn..."
 
-        let sysImg = "system-images;android-37.0;google_apis_playstore_ps16k;arm64-v8a"
-        let listResult = await executeCommand(sdkmanagerPath, arguments: ["--list_installed"])
-        if !listResult.stdout.contains("system-images;android-") {
-            busyMessage = "Đang tải System Image Android API 37 (vui lòng chờ)..."
-            _ = await executeCommand(sdkmanagerPath, arguments: ["--install", sysImg], input: "y\n")
-        }
+        // Find the best available installed system image first
+        await fetchAvailableAndroidMetadata()
 
-        busyMessage = "Đang tạo AVD \(safeName)..."
-        let createResult = await executeCommand(
-            avdmanagerPath,
-            arguments: [
-                "create", "avd",
-                "-n", safeName,
-                "-k", sysImg,
-                "-d", "pixel_9_pro",
-                "--force"
-            ],
-            input: "no\n"
-        )
+        let targetImage: AndroidSystemImage? = self.availableAndroidSystemImages.first(where: { $0.isInstalled })
+        let bestDev = self.availableAndroidDeviceProfiles.first?.deviceId ?? "pixel_8"
 
-        if createResult.exitCode != 0 {
-            _ = await executeCommand(
-                avdmanagerPath,
-                arguments: [
-                    "create", "avd",
-                    "-n", safeName,
-                    "-k", sysImg,
-                    "--force"
-                ],
-                input: "no\n"
-            )
+        if let installedImg = targetImage {
+            let avdName = name ?? "Pixel_Auto_\(installedImg.apiLevel.replacingOccurrences(of: ".", with: "_"))"
+            let safeName = Self.sanitizeAvdName(avdName)
+            busyMessage = "Đang tạo máy ảo \(safeName) với Android \(installedImg.apiLevel)..."
+            _ = await createCustomAndroidAVD(name: safeName, deviceId: bestDev, systemImage: installedImg.packagePath)
+        } else {
+            // No image installed yet -> download default recommended image (Android 35 / 37)
+            let fallbackPkg = "system-images;android-35;google_apis_playstore;arm64-v8a"
+            busyMessage = "Chưa có System Image, đang tải Android 15 (vui lòng chờ)..."
+            _ = await executeCommand("/bin/bash", arguments: ["-c", "printf 'y\\n' | '\(sdkmanagerPath)' --install '\(fallbackPkg)'"])
+            await fetchAvailableAndroidMetadata()
+            let avdName = name ?? "Pixel_15_Auto"
+            let safeName = Self.sanitizeAvdName(avdName)
+            _ = await createCustomAndroidAVD(name: safeName, deviceId: bestDev, systemImage: fallbackPkg)
         }
 
         await fetchAndroidAVDs()
@@ -872,64 +937,173 @@ public class DeviceManager: ObservableObject {
         let safeName = Self.sanitizeAvdName(name)
         busyMessage = "Đang tạo máy ảo \(safeName)..."
 
-        var result = await executeCommand(
-            avdmanagerPath,
-            arguments: [
-                "create", "avd",
-                "-n", safeName,
-                "-k", systemImage,
-                "-d", deviceId,
-                "--force"
-            ],
-            input: "no\n"
-        )
+        let fm = FileManager.default
+        let homeDir = fm.homeDirectoryForCurrentUser.path
+        let avdIni = "\(homeDir)/.android/avd/\(safeName).ini"
 
-        // Fallback without deviceId if device definition failed
-        if result.exitCode != 0 {
-            result = await executeCommand(
-                avdmanagerPath,
-                arguments: [
-                    "create", "avd",
-                    "-n", safeName,
-                    "-k", systemImage,
-                    "--force"
-                ],
-                input: "no\n"
-            )
+        // Parse tag and abi if present in package path
+        // e.g. system-images;android-35;google_apis_playstore;arm64-v8a
+        let parts = systemImage.components(separatedBy: ";")
+        var tagArg: [String] = []
+        var abiArg: [String] = []
+        if parts.count >= 4 {
+            let tag = parts[2]
+            let abi = parts[3]
+            tagArg = ["--tag", tag]
+            abiArg = ["--abi", abi]
+        }
+
+        // Method 1: Using bash with printf 'no\n' and deviceId
+        let devArgs = !deviceId.isEmpty ? ["-d", deviceId] : []
+        var bashCmd = "printf 'no\\n' | '\(avdmanagerPath)' create avd -n '\(safeName)' -k '\(systemImage)' \(devArgs.joined(separator: " ")) \(tagArg.joined(separator: " ")) \(abiArg.joined(separator: " ")) -c 512M --force"
+        var res = await executeCommand("/bin/bash", arguments: ["-c", bashCmd])
+
+        // Fallback 1: If failed and deviceId was specified, retry without -d
+        if !fm.fileExists(atPath: avdIni) && res.exitCode != 0 && !deviceId.isEmpty {
+            bashCmd = "printf 'no\\n' | '\(avdmanagerPath)' create avd -n '\(safeName)' -k '\(systemImage)' \(tagArg.joined(separator: " ")) \(abiArg.joined(separator: " ")) -c 512M --force"
+            res = await executeCommand("/bin/bash", arguments: ["-c", bashCmd])
+        }
+
+        // Fallback 2: Direct avdmanager invocation
+        if !fm.fileExists(atPath: avdIni) {
+            var directArgs = ["create", "avd", "-n", safeName, "-k", systemImage, "--force", "-c", "512M"]
+            if !deviceId.isEmpty {
+                directArgs.append(contentsOf: ["-d", deviceId])
+            }
+            directArgs.append(contentsOf: tagArg)
+            directArgs.append(contentsOf: abiArg)
+            res = await executeCommand(avdmanagerPath, arguments: directArgs, input: "no\n")
         }
 
         await fetchAndroidAVDs()
         isBusy = false
         busyMessage = ""
 
-        let fm = FileManager.default
-        let homeDir = fm.homeDirectoryForCurrentUser.path
-        let avdIni = "\(homeDir)/.android/avd/\(safeName).ini"
         let createdSuccessfully = fm.fileExists(atPath: avdIni) || self.androidDevices.contains(where: { $0.name == safeName })
 
         if createdSuccessfully {
             return (true, nil)
         } else {
-            let errMsg = !result.stderr.isEmpty ? result.stderr : (!result.stdout.isEmpty ? result.stdout : "Lỗi khi tạo AVD (exit code \(result.exitCode))")
-            return (false, errMsg)
+            var errOutput = res.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if errOutput.isEmpty {
+                errOutput = res.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let cleanedLines = errOutput.components(separatedBy: "\n").filter { line in
+                !line.contains("This version only understands SDK XML versions") &&
+                !line.contains("integer expression expected") &&
+                !line.contains("Loading local repository") &&
+                !line.contains("Fetch remote repository")
+            }
+            let meaningfulErr = cleanedLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalErr = !meaningfulErr.isEmpty ? meaningfulErr : (errOutput.isEmpty ? "Lỗi không xác định khi tạo AVD (exit code \(res.exitCode))" : errOutput)
+            return (false, finalErr)
         }
     }
 
     public func fetchAvailableAndroidMetadata() async {
-        let standardImages: [(id: String, name: String, api: String)] = [
+        let fm = FileManager.default
+        var installedImages: [AndroidSystemImage] = []
+        var installedPackagePaths: Set<String> = []
+
+        // Method 1: Scan disk directly at \(androidHome)/system-images
+        let sysImgDir = "\(androidHome)/system-images"
+        if let apiDirs = try? fm.contentsOfDirectory(atPath: sysImgDir) {
+            for apiDir in apiDirs where !apiDir.hasPrefix(".") {
+                let apiPath = "\(sysImgDir)/\(apiDir)"
+                if let tagDirs = try? fm.contentsOfDirectory(atPath: apiPath) {
+                    for tagDir in tagDirs where !tagDir.hasPrefix(".") {
+                        let tagPath = "\(apiPath)/\(tagDir)"
+                        if let abiDirs = try? fm.contentsOfDirectory(atPath: tagPath) {
+                            for abiDir in abiDirs where !abiDir.hasPrefix(".") {
+                                let abiPath = "\(tagPath)/\(abiDir)"
+                                let sourceProp = "\(abiPath)/source.properties"
+                                if fm.fileExists(atPath: sourceProp) {
+                                    let pkgId = "system-images;\(apiDir);\(tagDir);\(abiDir)"
+                                    installedPackagePaths.insert(pkgId)
+
+                                    let apiNumber = apiDir.replacingOccurrences(of: "android-", with: "")
+                                    var tagDisplay = tagDir.replacingOccurrences(of: "_", with: " ").capitalized
+                                    if tagDir.contains("playstore") {
+                                        tagDisplay = "Play Store"
+                                    } else if tagDir.contains("google_apis") {
+                                        tagDisplay = "Google APIs"
+                                    } else if tagDir == "default" {
+                                        tagDisplay = "AOSP"
+                                    }
+
+                                    let friendlyAndroidName: String
+                                    switch apiNumber {
+                                    case "37.0", "37": friendlyAndroidName = "Android 17"
+                                    case "36.0", "36": friendlyAndroidName = "Android 16"
+                                    case "35": friendlyAndroidName = "Android 15"
+                                    case "34": friendlyAndroidName = "Android 14"
+                                    case "33": friendlyAndroidName = "Android 13"
+                                    case "32": friendlyAndroidName = "Android 12L"
+                                    case "31": friendlyAndroidName = "Android 12"
+                                    case "30": friendlyAndroidName = "Android 11"
+                                    case "29": friendlyAndroidName = "Android 10"
+                                    default: friendlyAndroidName = "Android API \(apiNumber)"
+                                    }
+
+                                    let displayName = "\(friendlyAndroidName) (API \(apiNumber)) \(tagDisplay) [\(abiDir)]"
+                                    installedImages.append(AndroidSystemImage(
+                                        packagePath: pkgId,
+                                        name: displayName,
+                                        apiLevel: apiNumber,
+                                        isInstalled: true
+                                    ))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Method 2: Fallback to sdkmanager --list_installed
+        if installedImages.isEmpty && !sdkmanagerPath.isEmpty {
+            let installedResult = await executeCommand(sdkmanagerPath, arguments: ["--list_installed"])
+            for line in installedResult.stdout.components(separatedBy: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("system-images;") {
+                    let parts = trimmed.components(separatedBy: "|").first?.trimmingCharacters(in: .whitespaces) ?? ""
+                    if !parts.isEmpty {
+                        installedPackagePaths.insert(parts)
+                    }
+                }
+            }
+        }
+
+        // Standard candidates for quick download
+        let standardCandidates: [(id: String, name: String, api: String)] = [
             ("system-images;android-37.0;google_apis_playstore_ps16k;arm64-v8a", "Android 17 (API 37.0) Play Store", "37.0"),
             ("system-images;android-36;google_apis_playstore;arm64-v8a", "Android 16 (API 36.0) Play Store", "36.0"),
             ("system-images;android-35;google_apis_playstore;arm64-v8a", "Android 15 (API 35.0) Play Store", "35.0"),
+            ("system-images;android-35;google_apis;arm64-v8a", "Android 15 (API 35.0) Google APIs", "35.0"),
             ("system-images;android-34;google_apis_playstore;arm64-v8a", "Android 14 (API 34.0) Play Store", "34.0"),
-            ("system-images;android-33;google_apis_playstore;arm64-v8a", "Android 13 (API 33.0) Play Store", "33.0")
+            ("system-images;android-34;google_apis;arm64-v8a", "Android 14 (API 34.0) Google APIs", "34.0"),
+            ("system-images;android-33;google_apis_playstore;arm64-v8a", "Android 13 (API 33.0) Play Store", "33.0"),
+            ("system-images;android-31;google_apis;arm64-v8a", "Android 12 (API 31.0) Google APIs", "31.0")
         ]
 
-        let installedResult = await executeCommand(sdkmanagerPath, arguments: ["--list_installed"])
-        let installedText = installedResult.stdout
+        var allImages: [AndroidSystemImage] = installedImages
 
-        self.availableAndroidSystemImages = standardImages.map { item in
-            let installed = installedText.contains(item.id)
-            return AndroidSystemImage(packagePath: item.id, name: item.name, apiLevel: item.api, isInstalled: installed)
+        for candidate in standardCandidates {
+            if installedPackagePaths.contains(candidate.id) {
+                if !allImages.contains(where: { $0.packagePath == candidate.id }) {
+                    allImages.append(AndroidSystemImage(packagePath: candidate.id, name: candidate.name, apiLevel: candidate.api, isInstalled: true))
+                }
+            } else {
+                allImages.append(AndroidSystemImage(packagePath: candidate.id, name: candidate.name, apiLevel: candidate.api, isInstalled: false))
+            }
+        }
+
+        // Sort: installed first, then newest API level descending
+        self.availableAndroidSystemImages = allImages.sorted {
+            if $0.isInstalled != $1.isInstalled {
+                return $0.isInstalled && !$1.isInstalled
+            }
+            return $0.apiLevel.localizedStandardCompare($1.apiLevel) == .orderedDescending
         }
 
         // Dynamically query supported devices from SDK
@@ -964,6 +1138,10 @@ public class DeviceManager: ObservableObject {
                 AndroidDeviceProfile(deviceId: "pixel_6", name: "Pixel 6"),
                 AndroidDeviceProfile(deviceId: "medium_phone", name: "Medium Phone")
             ]
+        } else {
+            profiles.sort {
+                $0.deviceId.localizedStandardCompare($1.deviceId) == .orderedDescending
+            }
         }
         self.availableAndroidDeviceProfiles = profiles
     }
@@ -971,7 +1149,7 @@ public class DeviceManager: ObservableObject {
     public func downloadAndroidSystemImage(_ packagePath: String) async {
         isBusy = true
         busyMessage = "Đang tải gói System Image (vui lòng chờ vài phút)..."
-        _ = await executeCommand(sdkmanagerPath, arguments: ["--install", packagePath], input: "y\n")
+        _ = await executeCommand("/bin/bash", arguments: ["-c", "printf 'y\\n' | '\(sdkmanagerPath)' --install '\(packagePath)'"])
         await fetchAvailableAndroidMetadata()
         isBusy = false
         busyMessage = ""

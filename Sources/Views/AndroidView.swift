@@ -128,13 +128,13 @@ public struct AndroidView: View {
                         .foregroundColor(.secondary)
                     Text("Chưa có máy ảo Android AVD nào")
                         .font(.headline)
-                    Text("Bấm nút bên dưới để tạo nhanh máy ảo Pixel 9 Pro mới nhất chạy Android API 37 hoặc tạo tuỳ chỉnh theo ý muốn.")
+                    Text("Bấm nút bên dưới để tạo nhanh máy ảo Android từ gói có sẵn trên máy hoặc tạo tuỳ chỉnh theo ý muốn.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
 
                     HStack(spacing: 12) {
-                        Button("Tạo Pixel 9 Pro Nhanh") {
+                        Button("Tạo máy ảo AVD Nhanh") {
                             Task { await manager.createLatestAndroidAVD() }
                         }
                         .buttonStyle(.borderedProminent)
@@ -464,19 +464,33 @@ struct CreateAndroidAVDSheet: View {
         .padding(24)
         .frame(width: 500, height: 440)
         .onAppear {
-            if let firstDev = manager.availableAndroidDeviceProfiles.first {
-                selectedDeviceId = firstDev.deviceId
+            updateSelectionDefaults()
+        }
+        .task {
+            if manager.availableAndroidSystemImages.isEmpty {
+                await manager.fetchAvailableAndroidMetadata()
             }
-            if let installedImg = manager.availableAndroidSystemImages.first(where: { $0.isInstalled }) {
-                selectedPackagePath = installedImg.packagePath
-            } else if let first = manager.availableAndroidSystemImages.first {
-                selectedPackagePath = first.packagePath
-            }
+            updateSelectionDefaults()
         }
         .alert("Không thể tạo máy ảo Android", isPresented: $showingErrorAlert) {
             Button("Đóng", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "Đã xảy ra lỗi khi tạo AVD. Vui lòng kiểm tra lại cấu hình hoặc xem tab Terminal Logs.")
+        }
+    }
+
+    private func updateSelectionDefaults() {
+        if selectedDeviceId.isEmpty || !manager.availableAndroidDeviceProfiles.contains(where: { $0.deviceId == selectedDeviceId }) {
+            if let firstDev = manager.availableAndroidDeviceProfiles.first {
+                selectedDeviceId = firstDev.deviceId
+            }
+        }
+        if selectedPackagePath.isEmpty || !manager.availableAndroidSystemImages.contains(where: { $0.packagePath == selectedPackagePath }) {
+            if let installedImg = manager.availableAndroidSystemImages.first(where: { $0.isInstalled }) {
+                selectedPackagePath = installedImg.packagePath
+            } else if let first = manager.availableAndroidSystemImages.first {
+                selectedPackagePath = first.packagePath
+            }
         }
     }
 }
